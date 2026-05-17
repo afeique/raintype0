@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>RAINTYPE0</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="css/styles.css">
+
+    <!-- Vendored sfxr — runtime SFX synthesizer.
+         Defines globals: SQUARE, SAWTOOTH, SINE, NOISE, sfxr. -->
+    <script src="vendor/riffwave.js"></script>
+    <script src="vendor/sfxr.js"></script>
+</head>
+<body>
+    <div id="scanline-overlay"></div>
+
+    <div id="title-screen">
+        <h1 id="game-title"></h1>
+        <p id="high-score-display"></p>
+        <p id="start-prompt">Press Any Key To Start</p>
+        <p id="version-tag"></p>
+    </div>
+
+    <div id="orientation-overlay">
+        <div class="rotate-icon">📱</div>
+        <p>For the best experience,<br>please rotate your device to landscape mode.</p>
+    </div>
+
+    <div id="score" class="ui-element">0</div>
+
+    <div id="game-message-overlay" class="ui-element">
+        <h1 id="message-title" class="message-title" style="display: none;"></h1>
+        <p id="message-subtitle" class="message-subtitle" style="display: none;"></p>
+    </div>
+
+    <div id="pause-overlay" class="ui-element">
+        <div id="pause-panel">
+            <h2>PAUSED</h2>
+
+            <div class="pause-section desktop-only">
+                <h3>Controls</h3>
+                <div class="control-row"><span>Rotate</span><span class="key">← →</span></div>
+                <div class="control-row"><span>Accelerate</span><span class="key">↑</span></div>
+                <div class="control-row"><span>Decelerate</span><span class="key">↓</span></div>
+                <div class="control-row"><span>Fire</span><span class="key">SPACE</span></div>
+                <div class="control-row"><span>Pause / Resume</span><span class="key">ESC</span></div>
+            </div>
+
+            <div class="pause-section mobile-only">
+                <h3>Controls</h3>
+                <div class="control-row"><span>Move / Dodge</span><span class="key">STICK</span></div>
+                <div class="control-row"><span>Aim</span><span class="key">AUTO</span></div>
+                <div class="control-row"><span>Fire</span><span class="key">AUTO</span></div>
+            </div>
+
+            <div class="pause-section">
+                <h3>Audio</h3>
+                <div id="now-playing" class="now-playing">— —</div>
+                <div class="music-buttons">
+                    <button id="bgm-prev" class="music-btn" type="button" title="Previous track">◀◀</button>
+                    <button id="bgm-toggle" class="music-btn" type="button" title="Play / pause">▶</button>
+                    <button id="bgm-next" class="music-btn" type="button" title="Next track">▶▶</button>
+                </div>
+                <div class="audio-row">
+                    <label for="bgm-vol">Music</label>
+                    <input id="bgm-vol" type="range" min="0" max="100" value="50">
+                    <button id="bgm-mute" class="mute-btn" type="button" title="Toggle music">♪</button>
+                </div>
+                <div class="audio-row">
+                    <label for="sfx-vol">SFX</label>
+                    <input id="sfx-vol" type="range" min="0" max="100" value="40">
+                    <button id="sfx-mute" class="mute-btn" type="button" title="Toggle sound effects">♫</button>
+                </div>
+            </div>
+
+            <div class="pause-actions">
+                <button id="resume-button" class="pause-btn primary" type="button">Resume</button>
+                <button id="restart-button" class="pause-btn" type="button">Restart</button>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="mobile-pause-button">||</div>
+
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
