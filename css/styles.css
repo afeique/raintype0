@@ -1,0 +1,537 @@
+/* RAINTYPE0 — classic visual aesthetic ported from monosrc. */
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #000;
+    color: #fff;
+    overflow: hidden;
+    font-family: 'Press Start 2P', cursive;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+canvas {
+    display: block;
+    background-color: #000;
+}
+
+.ui-element {
+    position: absolute;
+    color: #fff;
+    text-shadow: 0 0 5px rgba(255, 255, 255, 0.7);
+    z-index: 10;
+}
+
+#score {
+    top: 20px;
+    left: 20px;
+    font-size: 24px;
+}
+
+#wave-display {
+    top: 20px;
+    right: 20px;
+    font-size: 24px;
+}
+
+#game-message-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    z-index: 50;
+    pointer-events: none;
+    text-align: center;
+}
+
+.message-title {
+    font-size: 48px;
+    text-shadow: 0 0 15px #f0f;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.message-subtitle {
+    font-size: 20px;
+    margin-top: 20px;
+    line-height: 1.5;
+}
+
+/* ── Pause menu ──────────────────────────────────────────────────────── */
+
+#pause-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.78);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 60;
+    pointer-events: all;
+}
+
+#pause-panel {
+    font-size: 16px;
+    text-align: left;
+    border: 2px solid white;
+    padding: 24px 36px;
+    background-color: rgba(0, 0, 0, 0.6);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+    min-width: 320px;
+    max-width: 90vw;
+    max-height: 86vh;
+    overflow-y: auto;
+}
+
+#pause-panel h2 {
+    margin: 0 0 18px 0;
+    font-size: 28px;
+    text-align: center;
+    text-shadow: 0 0 10px #f0f;
+}
+
+#pause-panel .pause-section {
+    margin: 18px 0;
+}
+
+#pause-panel .pause-section h3 {
+    font-size: 13px;
+    color: #b9b9ff;
+    margin: 0 0 10px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+#pause-panel .control-row {
+    display: flex;
+    justify-content: space-between;
+    line-height: 2.1;
+    font-size: 13px;
+    color: #ddd;
+}
+
+#pause-panel .control-row .key {
+    color: #0ff;
+    text-shadow: 0 0 6px rgba(0, 255, 255, 0.6);
+}
+
+.audio-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 10px 0;
+    font-size: 13px;
+}
+
+.audio-row label {
+    flex: 0 0 70px;
+    color: #ddd;
+}
+
+.audio-row input[type="range"] {
+    flex: 1;
+    accent-color: #0ff;
+    cursor: pointer;
+}
+
+.audio-row .mute-btn {
+    flex: 0 0 38px;
+    font-family: 'Press Start 2P', cursive;
+    font-size: 14px;
+    color: white;
+    background: #222;
+    border: 2px solid #555;
+    cursor: pointer;
+    padding: 4px;
+}
+
+.audio-row .mute-btn.muted {
+    border-color: #f55;
+    color: #f55;
+}
+
+.now-playing {
+    margin: 8px 0 10px 0;
+    font-size: 11px;
+    color: #8ad;
+    text-align: center;
+    text-shadow: 0 0 6px rgba(140, 200, 255, 0.5);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.music-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 6px 0 12px 0;
+}
+
+.music-btn {
+    flex: 0 0 auto;
+    min-width: 46px;
+    padding: 6px 10px;
+    font-family: 'Press Start 2P', cursive;
+    font-size: 12px;
+    color: #cfe;
+    background: #222;
+    border: 2px solid #557;
+    cursor: pointer;
+}
+
+.music-btn:hover {
+    background: #335;
+    border-color: #0ff;
+}
+
+.pause-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 22px;
+    justify-content: center;
+}
+
+.pause-btn {
+    padding: 10px 16px;
+    font-family: 'Press Start 2P', cursive;
+    font-size: 14px;
+    color: white;
+    background: #222;
+    border: 2px solid white;
+    cursor: pointer;
+}
+
+.pause-btn:hover {
+    background: #444;
+}
+
+.pause-btn.primary {
+    background: #114;
+    border-color: #0ff;
+    color: #0ff;
+    text-shadow: 0 0 6px rgba(0, 255, 255, 0.7);
+}
+
+.mobile-only {
+    display: none;
+}
+
+/* ── CRT scanline overlay (a defining piece of the aesthetic) ────────── */
+
+#scanline-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    background: linear-gradient(
+        to bottom,
+        rgba(18, 16, 16, 0) 50%,
+        rgba(0, 0, 0, 0.25) 50%
+    );
+    background-size: 100% 4px;
+    animation: scanline 10s linear infinite;
+    z-index: 100;
+}
+
+/* ── Mobile controls ─────────────────────────────────────────────────── */
+
+#mobile-controls {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 200;
+}
+
+.control-button {
+    position: absolute;
+    background-color: rgba(255, 255, 255, 0.15);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: rgba(255, 255, 255, 0.6);
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: all;
+    box-sizing: border-box;
+    transition: transform 0.05s ease-out;
+}
+
+.control-button:active {
+    background-color: rgba(255, 255, 255, 0.3);
+    transform: scale(0.95);
+}
+
+#joystick-area {
+    position: absolute;
+    width: 30vmin;
+    height: 30vmin;
+    pointer-events: all;
+    top: 65%;
+    left: 5%;
+}
+
+#joystick-base {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+}
+
+#joystick-handle {
+    position: absolute;
+    width: 14vmin;
+    height: 14vmin;
+    top: 8vmin;
+    left: 8vmin;
+    background: rgba(255, 255, 255, 0.2);
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-radius: 50%;
+    transition: transform 0.1s ease-out;
+}
+
+#touch-fire {
+    top: 65%;
+    left: 70%;
+    width: 20vmin;
+    height: 20vmin;
+    font-size: 10vmin;
+}
+
+#mobile-pause-button {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 50px;
+    height: 50px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 30px;
+    z-index: 201;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    pointer-events: all;
+}
+
+#customization-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+    z-index: 300;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    pointer-events: all;
+}
+
+#customization-overlay h2 {
+    font-size: 24px;
+    margin-bottom: 15px;
+}
+
+#customization-overlay p {
+    font-size: 16px;
+    max-width: 80%;
+    margin-bottom: 30px;
+    line-height: 1.5;
+}
+
+#customization-overlay .draggable {
+    border: 2px dashed #f0f;
+    animation: pulse-border 2s infinite;
+}
+
+#save-layout-button {
+    margin-top: 30px;
+    padding: 15px 30px;
+    font-family: 'Press Start 2P', cursive;
+    font-size: 18px;
+    color: black;
+    background: white;
+    border: 2px solid white;
+    cursor: pointer;
+}
+
+/* ── Title screen ────────────────────────────────────────────────────── */
+
+#title-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    /* Transparent so the canvas attractor (drifting stars + asteroids
+       with the motion-blur veil) shows through. A subtle radial
+       vignette darkens the corners and pulls focus to the title. */
+    background:
+        radial-gradient(ellipse at center,
+            rgba(0,0,0,0.0) 0%,
+            rgba(0,0,0,0.35) 60%,
+            rgba(0,0,0,0.78) 100%);
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    pointer-events: all;
+}
+
+#game-title {
+    font-size: 10vmin;
+    text-align: center;
+    margin: 0;
+}
+
+.title-char {
+    display: inline-block;
+    position: relative;
+    animation: color-cycle 10s linear infinite, wave 2s ease-in-out infinite;
+}
+
+#start-prompt {
+    font-size: 2.5vmin;
+    animation: pulse-opacity 2s ease-in-out infinite;
+    margin-top: 40px;
+}
+
+#high-score-display {
+    margin-top: 20px;
+    font-size: 2vmin;
+    color: #ffd700;
+    text-shadow: 0 0 8px #ffd700;
+}
+
+#version-tag {
+    position: absolute;
+    bottom: 12px;
+    right: 16px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 0.05em;
+}
+
+#orientation-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    color: #fff;
+    z-index: 9999;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    font-size: 18px;
+    line-height: 1.6;
+}
+
+#orientation-overlay p {
+    max-width: 80%;
+}
+
+.rotate-icon {
+    font-size: 64px;
+    transform: rotate(-90deg);
+    margin-bottom: 20px;
+}
+
+/* ── Mobile breakpoint ───────────────────────────────────────────────── */
+
+@media (hover: none) and (pointer: coarse), (max-width: 768px) {
+
+    #mobile-controls,
+    #mobile-pause-button {
+        display: block;
+    }
+
+    #wave-display,
+    #score {
+        font-size: 18px;
+    }
+
+    #mobile-pause-button {
+        display: flex;
+    }
+
+    .mobile-only {
+        display: revert;
+    }
+
+    .desktop-only {
+        display: none;
+    }
+}
+
+/* ── Keyframes ───────────────────────────────────────────────────────── */
+
+@keyframes scanline {
+    from { background-position: 0 0; }
+    to   { background-position: 0 -40px; }
+}
+
+@keyframes pulse {
+    0%   { transform: scale(1);    opacity: 1; }
+    50%  { transform: scale(1.05); opacity: 0.8; }
+    100% { transform: scale(1);    opacity: 1; }
+}
+
+@keyframes wave {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-15px); }
+}
+
+@keyframes color-cycle {
+    0%   { color: #00F;    text-shadow: 0 0 15px #00F; }
+    16%  { color: #4B0082; text-shadow: 0 0 15px #4B0082; }
+    32%  { color: #8A2BE2; text-shadow: 0 0 15px #8A2BE2; }
+    48%  { color: #FF00FF; text-shadow: 0 0 15px #FF00FF; }
+    64%  { color: #FF4500; text-shadow: 0 0 15px #FF4500; }
+    80%  { color: #F00;    text-shadow: 0 0 15px #F00; }
+    100% { color: #00F;    text-shadow: 0 0 15px #00F; }
+}
+
+@keyframes pulse-opacity {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.4; }
+}
+
+@keyframes pulse-border {
+    0%   { border-color: #f0f; }
+    50%  { border-color: #0ff; }
+    100% { border-color: #f0f; }
+}
