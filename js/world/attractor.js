@@ -12,8 +12,14 @@ import { Star } from '../entities/star.js';
 import { Asteroid } from '../entities/asteroid.js';
 import { PoolManager } from '../core/pool-manager.js';
 import { STAR_COUNT, MIN_STAR_DIST, random, Viewport } from '../core/utils.js';
+import { resolveAsteroidCollisions } from './collisions.js';
 
 const ATTRACTOR_ASTEROIDS = 6;
+// Minimum gap between any two attractor asteroids at spawn time, so
+// they start visually separated (the elastic collision still kicks in
+// later if they drift together). Add a small padding beyond the sum of
+// radii so the wireframes never visually touch on the first frame.
+const ATTRACTOR_AST_PAD = 24;
 
 export function createAttractor() {
     const pools = {
@@ -55,11 +61,26 @@ export function createAttractor() {
     }
 
     function spawnAsteroids() {
+        const active = pools.asteroids.activeObjects;
         for (let i = 0; i < ATTRACTOR_ASTEROIDS; i++) {
             const r = random(35, 70);
-            // Distribute across the canvas at random.
-            const x = random(0, Viewport.width);
-            const y = random(0, Viewport.height);
+            // Reject placements that would overlap an already-placed
+            // attractor asteroid. Cap attempts so we never infinite-loop
+            // on tight viewports; if every attempt fails just take the
+            // last candidate and let the elastic collision sort it out.
+            let x = 0, y = 0;
+            let attempts = 0;
+            while (attempts < 80) {
+                x = random(r, Viewport.width  - r);
+                y = random(r, Viewport.height - r);
+                let overlap = false;
+                for (const o of active) {
+                    const minDist = r + o.radius + ATTRACTOR_AST_PAD;
+                    if (Math.hypot(x - o.x, y - o.y) < minDist) { overlap = true; break; }
+                }
+                if (!overlap) break;
+                attempts++;
+            }
             const ast = pools.asteroids.get(x, y, r);
             // Gentle, cinematic drift — not the punchy gameplay
             // velocity. Slows down the eye, lets the title breathe.
@@ -78,13 +99,20 @@ export function createAttractor() {
 
     let t = 0;
     function tick() {
-        t += 0.004; // slow oscillation
-        // Lissajous-style "camera" drift — magnitude 0.6 px/frame so the
-        // parallax is felt but never overwhelms the static asteroids.
-        cam.vel.x = Math.cos(t * 1.1) * 0.6;
-        cam.vel.y = Math.sin(t * 0.9) * 0.6;
+        t += 0.005;
+        // Two-sinusoid sum so the synthesised camera follows a
+        // meandering path rather than a tight Lissajous loop — gives
+        // the starfield a clearly visible drift while still keeping
+        // the asteroids the focal point. Magnitude peaks around
+        // 2 px/frame, ~3x the previous version.
+        cam.vel.x = Math.cos(t * 1.10) * 1.4 + Math.sin(t * 0.32) * 0.7;
+        cam.vel.y = Math.sin(t * 0.90) * 1.4 + Math.cos(t * 0.41) * 0.7;
 
         pools.asteroids.updateActive();
+        // Elastic asteroid–asteroid collisions on the title screen so
+        // the drifting rocks bounce off each other instead of phasing.
+        // No particle pool here — physics only, no rocky-debris spawn.
+        resolveAsteroidCollisions(pools.asteroids.activeObjects, null);
         for (const s of pools.stars.activeObjects) {
             s.update(cam.vel, cam, pools.stars);
         }

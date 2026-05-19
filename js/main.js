@@ -24,23 +24,33 @@ import { handleCollisions } from './world/collisions.js';
 import { createAttractor } from './world/attractor.js';
 import { createSpawner } from './world/spawner.js';
 
-import { setupTitleScreen, hideTitleScreen } from './ui/title-screen.js';
+import { setupTitleScreen, hideTitleScreen, playTitleLaunchAnimation } from './ui/title-screen.js';
 import { showMessage, hideMessage } from './ui/messages.js';
 import { setupPauseMenu } from './ui/pause.js';
 import { setupMobileControls } from './ui/mobile-controls.js';
 
+import { createRenderer } from './render/select.js';
+import { createUIOverlay } from './render/ui-overlay.js';
+import { FPSOverlay } from './render/fps-overlay.js';
+import { BloomDebugOverlay } from './render/bloom-debug-overlay.js';
+
 // ── DOM + canvas ───────────────────────────────────────────────────────
 
 const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
 const mobilePauseBtn = document.getElementById('mobile-pause-button');
 
+let renderer = null;
+let ui = null;
+let fpsOverlay = null;
+let bloomDebug = null;
+
 function syncCanvasSize() {
     const w = window.innerWidth, h = window.innerHeight;
-    canvas.width = w;
-    canvas.height = h;
     Viewport.resize(w, h);
+    if (renderer) renderer.resize(w, h);
+    else { canvas.width = w; canvas.height = h; }
+    if (ui) ui.resize(w, h);
 }
 syncCanvasSize();
 
@@ -60,21 +70,13 @@ const game = {
 
 const input = {
     up: false, down: false, space: false, rotation: 0,
-    // For mobile-controls touch routing — exposes game state.
     gameState: () => game.state,
 };
 
-// Music player owns its own Audio instances; picks a random starting
-// track each session and shuffles the rest of the playlist.
 const music = new MusicPlayer();
 const MOBILE = isMobile();
 
-// Title-screen attractor — starfield + drifting asteroids running on
-// the canvas while the title overlay is visible. Built lazily after
-// canvas + viewport are sized.
 const attractor = createAttractor();
-
-// ── Pools ──────────────────────────────────────────────────────────────
 
 function buildPools() {
     game.pools = {
@@ -85,8 +87,6 @@ function buildPools() {
         stars:      new PoolManager(Star, STAR_COUNT + 100),
     };
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────
 
 function triggerScreenShake(duration, magnitude) {
     game.screenShakeDuration = duration;
@@ -120,8 +120,6 @@ function checkHighScore() {
         saveHighScore(game.highScore);
     }
 }
-
-// ── Game lifecycle ─────────────────────────────────────────────────────
 
 function init() {
     game.score = 0;
@@ -167,8 +165,6 @@ function togglePause() {
     }
 }
 
-// ── Orientation ────────────────────────────────────────────────────────
-
 function checkOrientation() {
     const overlay = document.getElementById('orientation-overlay');
     if (MOBILE && window.innerHeight > window.innerWidth) {
@@ -194,6 +190,14 @@ document.addEventListener('keydown', e => {
         togglePause();
         return;
     }
+    if (e.shiftKey && e.code === 'KeyF') {
+        if (fpsOverlay) fpsOverlay.toggleVisible();
+        return;
+    }
+    if (e.shiftKey && e.code === 'KeyB') {
+        if (bloomDebug) bloomDebug.toggleVisible();
+        return;
+    }
     if (game.state !== 'PLAYING' && game.state !== 'WAVE_TRANSITION') return;
     switch (e.code) {
         case 'ArrowUp':    input.up = true; break;
@@ -214,7 +218,6 @@ document.addEventListener('keyup', e => {
     }
 });
 
-// Desktop click / mobile tap → restart on game over.
 window.addEventListener('click', () => {
     if (game.state === 'GAME_OVER') init();
 });
@@ -237,7 +240,7 @@ if (MOBILE) {
 
 function update() {
     const mobileInput = mobileCtrl ? mobileCtrl.readInputs() : null;
-    game.player.update(ctx, {
+    game.player.update(null, {
         input,
         pools: game.pools,
         audio: audioManager,
@@ -258,29 +261,20 @@ function update() {
     );
     if (playerDied) playerDie();
 
-    // Continuous spawn — fixed target population; hard cap protects
-    // per-frame draw cost. No difficulty scaling.
     game.spawner.tick();
-
     scoreEl.textContent = game.score;
 }
 
 function draw() {
-    // Motion-blur veil — defining piece of the look. Runs every frame
-    // including the title screen so the attractor entities leave the
-    // same colour-trails the gameplay does.
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.fillRect(0, 0, Viewport.width, Viewport.height);
-
     if (game.state === 'TITLE_SCREEN') {
-        attractor.draw(ctx);
+        attractor.draw(renderer);
     } else {
-        game.pools.stars.drawActive(ctx);
-        game.pools.lineDebris.drawActive(ctx);
-        game.pools.particles.drawActive(ctx);
-        game.pools.asteroids.drawActive(ctx);
-        game.pools.bullets.drawActive(ctx);
-        game.player.draw(ctx);
+        game.pools.stars.drawActive(renderer);
+        game.pools.lineDebris.drawActive(renderer);
+        game.pools.particles.drawActive(renderer);
+        game.pools.asteroids.drawActive(renderer);
+        game.pools.bullets.drawActive(renderer);
+        game.player.draw(renderer);
     }
 }
 
@@ -292,31 +286,56 @@ function gameLoop() {
     } else if (game.state === 'PLAYING') {
         update();
     } else if (game.state === 'GAME_OVER' || game.state === 'PAUSED') {
-        // Keep particles/debris alive during freeze states so the
-        // playerExplosion ring still expands behind the GAME OVER text.
         game.pools.particles.updateActive(game.pools.particles);
         game.pools.lineDebris.updateActive(game.pools.lineDebris);
     }
 
-    ctx.save();
+    let shakeX = 0, shakeY = 0;
     if (game.screenShakeDuration > 0) {
-        const dx = (Math.random() - 0.5) * game.screenShakeMagnitude;
-        const dy = (Math.random() - 0.5) * game.screenShakeMagnitude;
-        ctx.translate(dx, dy);
+        shakeX = (Math.random() - 0.5) * game.screenShakeMagnitude;
+        shakeY = (Math.random() - 0.5) * game.screenShakeMagnitude;
         game.screenShakeDuration--;
         if (game.screenShakeDuration <= 0) game.screenShakeMagnitude = 0;
     }
-    draw();
-    ctx.restore();
 
-    // Mobile sticks render in canvas-space AFTER the shake transform is
-    // restored — so they don't shake with the game world.
-    if (mobileCtrl && game.state !== 'TITLE_SCREEN') mobileCtrl.draw(ctx);
+    // Live bloom tunables from the SHIFT+B debug overlay (no-op when
+    // the panel is closed or the renderer doesn't have bloom fields).
+    if (bloomDebug && renderer.bloomThreshold !== undefined) {
+        const p = bloomDebug.getParams(renderer);
+        if (p) {
+            renderer.bloomIntensity = p.intensity;
+            renderer.bloomThreshold = p.threshold;
+            renderer.bloomKnee      = p.knee;
+        }
+    }
+
+    renderer.beginFrame(shakeX, shakeY);
+    renderer.applyVeil(0, 0, 0, 0.3);
+    draw();
 
     if (game.state === 'GAME_OVER') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(0, 0, Viewport.width, Viewport.height);
+        // Darkening wash over the whole screen.
+        renderer.applyVeil(0, 0, 0, 0.5);
     }
+    renderer.endFrame();
+
+    // FPS overlay tick + per-batch instance counts (visible only when
+    // toggled on via SHIFT+F).
+    if (fpsOverlay) {
+        fpsOverlay.tick(performance.now());
+        if (game.pools) {
+            fpsOverlay.setInstanceCount('stars',      game.pools.stars.activeObjects.length);
+            fpsOverlay.setInstanceCount('particles',  game.pools.particles.activeObjects.length);
+            fpsOverlay.setInstanceCount('bullets',    game.pools.bullets.activeObjects.length);
+            fpsOverlay.setInstanceCount('lineDebris', game.pools.lineDebris.activeObjects.length);
+            fpsOverlay.setInstanceCount('asteroids',  game.pools.asteroids.activeObjects.length);
+        }
+    }
+
+    // UI overlay (mobile sticks + FPS) — always rendered on canvas2d.
+    ui.beginFrame();
+    if (mobileCtrl && game.state !== 'TITLE_SCREEN') mobileCtrl.draw(ui.ctx);
+    ui.endFrame(renderer.flag || 'canvas2d');
 
     requestAnimationFrame(gameLoop);
 }
@@ -325,23 +344,39 @@ function gameLoop() {
 
 function startGame() {
     if (game.state !== 'TITLE_SCREEN') return;
-    hideTitleScreen();
-    // Gameplay starts immediately. Audio init (AudioContext + sfxr
-    // synthesis) runs in parallel — if it succeeds the game gains SFX,
-    // if it fails the game still plays. Music play() must also live
-    // inside this gesture stack, but its rejection is harmless.
-    audioManager.init().catch(e => console.warn('[audio] init failed:', e));
-    music.isPlaying = true;
-    music.play().catch(() => { /* autoplay blocked */ });
-    init();
+    // De-register first so the launch animation doesn't re-fire on
+    // every keystroke / extra click during its ~1 s window.
     window.removeEventListener('keydown', startGame);
     window.removeEventListener('click', startGame);
     window.removeEventListener('touchstart', startGame);
+
+    audioManager.init().catch(e => console.warn('[audio] init failed:', e));
+    music.isPlaying = true;
+    music.play().catch(() => { /* autoplay blocked */ });
+
+    // Each letter of RAINTYPE0 flies outward + spins + fades while
+    // the title overlay dissolves. init() fires after the animation
+    // completes so the gameplay scene appears as the explosion
+    // clears, rather than under it. The attractor keeps running
+    // behind the launching title so the world feels alive.
+    playTitleLaunchAnimation(() => init());
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────
 
-function boot() {
+async function boot() {
+    renderer = await createRenderer(canvas);
+    ui = createUIOverlay(canvas);
+    syncCanvasSize();
+
+    // Diagnostic overlays — invisible until SHIFT+F / SHIFT+B.
+    fpsOverlay = new FPSOverlay();
+    fpsOverlay.setRenderMode(renderer.flag || 'canvas2d');
+    bloomDebug = new BloomDebugOverlay();
+    if (renderer.bloomThreshold !== undefined) {
+        bloomDebug.attach(renderer, `${renderer.flag} bloom`);
+    }
+
     const settings = loadSettings();
     setupTitleScreen(game.highScore);
     checkOrientation();

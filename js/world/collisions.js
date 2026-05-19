@@ -14,6 +14,62 @@ import {
     MIN_AST_RAD,
 } from '../core/utils.js';
 
+// Pairwise elastic collision resolution between every asteroid in the
+// list. Velocity exchange ONLY when the pair is actively closing —
+// already-separating pairs (split fragments, drifting overlaps) are
+// skipped or they'd re-bond every frame and jitter ("skipping" glitch).
+// No positional correction; the velocity carries pairs apart naturally
+// so overlapped rocks don't teleport at first contact.
+//
+// `particles` is optional — when supplied a rocky-debris burst spawns
+// at the contact midpoint. The title-screen attractor calls this with
+// null so it gets the physics without the particle cost.
+export function resolveAsteroidCollisions(asteroids, particles = null) {
+    for (let i = 0; i < asteroids.length; i++) {
+        const a1 = asteroids[i];
+        for (let j = i + 1; j < asteroids.length; j++) {
+            const a2 = asteroids[j];
+            const dx = a2.x - a1.x, dy = a2.y - a1.y;
+            const distSq = dx * dx + dy * dy;
+            const sumR = a1.radius + a2.radius;
+            if (distSq >= sumR * sumR || distSq < 0.01) continue;
+
+            const dist = Math.sqrt(distSq);
+            const nx = dx / dist, ny = dy / dist;
+
+            const rvx = a2.vel.x - a1.vel.x;
+            const rvy = a2.vel.y - a1.vel.y;
+            const closing = rvx * nx + rvy * ny;
+            if (closing >= 0) continue;
+
+            const tx = -ny, ty = nx;
+            const dpTan1 = a1.vel.x * tx + a1.vel.y * ty;
+            const dpTan2 = a2.vel.x * tx + a2.vel.y * ty;
+            const dpNorm1 = a1.vel.x * nx + a1.vel.y * ny;
+            const dpNorm2 = a2.vel.x * nx + a2.vel.y * ny;
+            const m1 = a1.mass, m2 = a2.mass;
+            const totalM = m1 + m2;
+            const newN1 = (dpNorm1 * (m1 - m2) + 2 * m2 * dpNorm2) / totalM;
+            const newN2 = (dpNorm2 * (m2 - m1) + 2 * m1 * dpNorm1) / totalM;
+            a1.vel.x = tx * dpTan1 + nx * newN1;
+            a1.vel.y = ty * dpTan1 + ny * newN1;
+            a2.vel.x = tx * dpTan2 + nx * newN2;
+            a2.vel.y = ty * dpTan2 + ny * newN2;
+
+            if (particles) {
+                const debrisCount = (random(8, 16)) | 0;
+                const cx = (a1.x + a2.x) * 0.5;
+                const cy = (a1.y + a2.y) * 0.5;
+                for (let d = 0; d < debrisCount; d++) {
+                    const angle = Math.atan2(ny, nx) + random(-0.7, 0.7);
+                    const speed = random(5, 13);
+                    particles.get(cx, cy, 'rockDebris', Math.cos(angle) * speed, Math.sin(angle) * speed);
+                }
+            }
+        }
+    }
+}
+
 export function createAsteroidHitEffect(x, y, pools) {
     for (let i = 0; i < 15; i++) pools.particles.get(x + random(-5, 5), y + random(-5, 5), 'asteroidHit');
     for (let i = 0; i < 8;  i++) pools.particles.get(x + random(-3, 3), y + random(-3, 3), 'debris');
@@ -107,59 +163,7 @@ export function handleCollisions(state, pools, audio, haptic, shake, onStarSpawn
     }
 
     // ── asteroid ↔ asteroid ────────────────────────────────────────────
-    // Velocity exchange ONLY when actively closing. Pairs that are
-    // already separating (split fragments, drifting overlaps) are
-    // skipped — they would otherwise get re-bonded by the exchange
-    // and jitter forever ("skipping" glitch). NO positional correction:
-    // the velocity carries them apart naturally, so overlapped rocks
-    // don't teleport when they touch.
-    const active = pools.asteroids.activeObjects;
-    for (let i = 0; i < active.length; i++) {
-        const a1 = active[i];
-        for (let j = i + 1; j < active.length; j++) {
-            const a2 = active[j];
-            const dx = a2.x - a1.x, dy = a2.y - a1.y;
-            const distSq = dx * dx + dy * dy;
-            const sumR = a1.radius + a2.radius;
-            if (distSq >= sumR * sumR || distSq < 0.01) continue;
-
-            const dist = Math.sqrt(distSq);
-            const nx = dx / dist, ny = dy / dist;
-
-            // Relative velocity along contact normal. Negative means
-            // they're closing; positive means already separating.
-            const rvx = a2.vel.x - a1.vel.x;
-            const rvy = a2.vel.y - a1.vel.y;
-            const closing = rvx * nx + rvy * ny;
-            if (closing >= 0) continue; // already separating — let it ride
-
-            // Real impact — elastic exchange along the contact normal
-            // (preserves tangential motion, swaps closing component).
-            const tx = -ny, ty = nx;
-            const dpTan1 = a1.vel.x * tx + a1.vel.y * ty;
-            const dpTan2 = a2.vel.x * tx + a2.vel.y * ty;
-            const dpNorm1 = a1.vel.x * nx + a1.vel.y * ny;
-            const dpNorm2 = a2.vel.x * nx + a2.vel.y * ny;
-            const m1 = a1.mass, m2 = a2.mass;
-            const totalM = m1 + m2;
-            const newN1 = (dpNorm1 * (m1 - m2) + 2 * m2 * dpNorm2) / totalM;
-            const newN2 = (dpNorm2 * (m2 - m1) + 2 * m1 * dpNorm1) / totalM;
-            a1.vel.x = tx * dpTan1 + nx * newN1;
-            a1.vel.y = ty * dpTan1 + ny * newN1;
-            a2.vel.x = tx * dpTan2 + nx * newN2;
-            a2.vel.y = ty * dpTan2 + ny * newN2;
-
-            // Rocky debris pop at the contact midpoint.
-            const debrisCount = (random(8, 16)) | 0;
-            const cx = (a1.x + a2.x) * 0.5;
-            const cy = (a1.y + a2.y) * 0.5;
-            for (let d = 0; d < debrisCount; d++) {
-                const angle = Math.atan2(ny, nx) + random(-0.7, 0.7);
-                const speed = random(5, 13);
-                pools.particles.get(cx, cy, 'rockDebris', Math.cos(angle) * speed, Math.sin(angle) * speed);
-            }
-        }
-    }
+    resolveAsteroidCollisions(pools.asteroids.activeObjects, pools.particles);
 
     // ── player ↔ stars (pickup) ───────────────────────────────────────
     if (state.player.active) {

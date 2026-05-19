@@ -6,16 +6,24 @@
 //     timer (300 frames).
 
 import {
-    NORMAL_STAR_COLORS,
-    STAR_ATTR, STAR_FRIC,
+    STAR_ATTR, STAR_ATTRACT_DIST, STAR_FRIC,
     BURST_STAR_ATTRACT_DIST, BURST_STAR_ATTR,
     random, wrap, Viewport,
 } from '../core/utils.js';
+import {
+    NORMAL_STAR_RGB,
+    PALETTE,
+} from '../render/color-util.js';
 
 const SHAPES = ['point', 'point', 'point', 'point', 'point', 'point', 'point', 'diamond', 'star4', 'star8', 'plus'];
 
 export class Star {
-    constructor() { this.active = false; }
+    constructor() {
+        this.active = false;
+        // Pre-allocated RGB triplets so reset() never allocates.
+        this.color = new Float32Array(3);
+        this.borderColor = new Float32Array(3);
+    }
 
     reset(x, y, burst = false) {
         this.x = x ?? random(0, Viewport.width);
@@ -42,12 +50,16 @@ export class Star {
             const ang = random(0, 2 * Math.PI);
             const spd = random(2, 5);
             this.vel = { x: Math.cos(ang) * spd, y: Math.sin(ang) * spd };
-            this.color = '#00ff7f';
-            this.borderColor = '#ffd700';
-            this.life = 300;
+            this.color.set(PALETTE.burstGreen);
+            this.borderColor.set(PALETTE.gold);
+            // Persist indefinitely — the player picks them up by flying
+            // over them. WebGL2 batches all stars in one instanced draw
+            // so the additional draw cost is negligible, and the world
+            // gets a richer "scatter & scoop" feel.
+            this.life = -1;
         } else {
-            this.color = NORMAL_STAR_COLORS[(Math.random() * NORMAL_STAR_COLORS.length) | 0];
-            this.borderColor = NORMAL_STAR_COLORS[(Math.random() * NORMAL_STAR_COLORS.length) | 0];
+            this.color.set(NORMAL_STAR_RGB[(Math.random() * NORMAL_STAR_RGB.length) | 0]);
+            this.borderColor.set(NORMAL_STAR_RGB[(Math.random() * NORMAL_STAR_RGB.length) | 0]);
             this.life = -1;
         }
     }
@@ -56,16 +68,16 @@ export class Star {
         if (!this.active) return;
 
         if (this.isBurst) {
-            this.life--;
-            if (this.life <= 0) {
-                pool.release(this);
-                return;
-            }
+            // Burst stars persist indefinitely (life = -1). They drift,
+            // friction-decelerate to a slow float, twinkle softly, and
+            // get magnet-pulled toward the player at a wide radius —
+            // same model as normal stars but punchier.
             this.vel.x *= STAR_FRIC;
             this.vel.y *= STAR_FRIC;
             this.x += this.vel.x;
             this.y += this.vel.y;
-            this.opacity = Math.min(1, this.life / 120);
+            this.opacityOffset += this.twinkleSpeed * 0.5;
+            this.opacity = (Math.sin(this.opacityOffset) + 1) / 2 * 0.4 + 0.6;
 
             const dx = player.x - this.x;
             const dy = player.y - this.y;
@@ -78,7 +90,7 @@ export class Star {
             const dx = player.x - this.x;
             const dy = player.y - this.y;
             const dist = Math.hypot(dx, dy);
-            if (player.active && dist < 150) {
+            if (player.active && dist < STAR_ATTRACT_DIST) {
                 this.x += (dx / dist) * STAR_ATTR * this.z;
                 this.y += (dy / dist) * STAR_ATTR * this.z;
             }
@@ -92,69 +104,94 @@ export class Star {
         wrap(this, Viewport);
     }
 
-    draw(ctx) {
+    draw(r) {
         if (!this.active) return;
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        ctx.globalAlpha = this.opacity * (this.z / 5);
+        const a = this.opacity * (this.z / 5);
+        if (a <= 0) return;
+
+        const cr = this.color[0], cg = this.color[1], cb = this.color[2];
+        const br = this.borderColor[0], bg = this.borderColor[1], bb = this.borderColor[2];
 
         if (this.shape === 'point') {
-            const borderSize = 1;
-            ctx.fillStyle = this.borderColor;
-            ctx.fillRect(
-                -this.radius / 2 - borderSize,
-                -this.radius / 2 - borderSize,
-                this.radius + borderSize * 2,
-                this.radius + borderSize * 2,
+            r.fillBorderedRect(
+                this.x, this.y, this.radius, 1,
+                cr, cg, cb, a,
+                br, bg, bb, a,
             );
-            ctx.fillStyle = this.color;
-            ctx.fillRect(-this.radius / 2, -this.radius / 2, this.radius, this.radius);
-        } else {
-            ctx.beginPath();
-            switch (this.shape) {
-                case 'diamond':
-                    ctx.moveTo(0, -this.radius);
-                    ctx.lineTo(this.radius * 0.7, 0);
-                    ctx.lineTo(0, this.radius);
-                    ctx.lineTo(-this.radius * 0.7, 0);
-                    ctx.closePath();
-                    break;
-                case 'plus':
-                    ctx.moveTo(0, -this.radius);
-                    ctx.lineTo(0, this.radius);
-                    ctx.moveTo(-this.radius, 0);
-                    ctx.lineTo(this.radius, 0);
-                    break;
-                case 'star4':
-                    for (let i = 0; i < 8; i++) {
-                        const a = i * Math.PI / 4;
-                        const r = i % 2 === 0 ? this.radius : this.radius * 0.4;
-                        ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-                    }
-                    ctx.closePath();
-                    break;
-                case 'star8':
-                    for (let i = 0; i < this.points * 2; i++) {
-                        const a = i * Math.PI / this.points;
-                        const r = i % 2 === 0 ? this.radius : this.innerRadiusRatio;
-                        ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-                    }
-                    ctx.closePath();
-                    break;
-                default:
-                    ctx.moveTo(-this.radius, -this.radius);
-                    ctx.lineTo(this.radius, this.radius);
-                    ctx.moveTo(this.radius, -this.radius);
-                    ctx.lineTo(-this.radius, this.radius);
-                    break;
-            }
-            ctx.strokeStyle = this.borderColor;
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            ctx.strokeStyle = this.color;
-            ctx.lineWidth = 0.5 + this.z / 5;
-            ctx.stroke();
+            return;
         }
-        ctx.restore();
+
+        const colorLineWidth = 0.5 + this.z / 5;
+        const x = this.x, y = this.y;
+
+        switch (this.shape) {
+            case 'diamond': {
+                const r0 = this.radius;
+                const rx = r0 * 0.7;
+                const p = [
+                    0, -r0,
+                    rx, 0,
+                    0, r0,
+                    -rx, 0,
+                ];
+                this._strokeClosed(r, x, y, p, br, bg, bb, a, 1);
+                this._strokeClosed(r, x, y, p, cr, cg, cb, a, colorLineWidth);
+                break;
+            }
+            case 'plus': {
+                const r0 = this.radius;
+                // Border pass — width 1.
+                r.drawLine(x, y - r0, x, y + r0, 1, br, bg, bb, a);
+                r.drawLine(x - r0, y, x + r0, y, 1, br, bg, bb, a);
+                // Color pass.
+                r.drawLine(x, y - r0, x, y + r0, colorLineWidth, cr, cg, cb, a);
+                r.drawLine(x - r0, y, x + r0, y, colorLineWidth, cr, cg, cb, a);
+                break;
+            }
+            case 'star4': {
+                const r0 = this.radius;
+                const r1 = r0 * 0.4;
+                const p = [];
+                for (let i = 0; i < 8; i++) {
+                    const ang = i * Math.PI / 4;
+                    const rad = i % 2 === 0 ? r0 : r1;
+                    p.push(Math.cos(ang) * rad, Math.sin(ang) * rad);
+                }
+                this._strokeClosed(r, x, y, p, br, bg, bb, a, 1);
+                this._strokeClosed(r, x, y, p, cr, cg, cb, a, colorLineWidth);
+                break;
+            }
+            case 'star8': {
+                const r0 = this.radius;
+                const r1 = this.innerRadiusRatio;
+                const p = [];
+                const n = this.points * 2;
+                for (let i = 0; i < n; i++) {
+                    const ang = i * Math.PI / this.points;
+                    const rad = i % 2 === 0 ? r0 : r1;
+                    p.push(Math.cos(ang) * rad, Math.sin(ang) * rad);
+                }
+                this._strokeClosed(r, x, y, p, br, bg, bb, a, 1);
+                this._strokeClosed(r, x, y, p, cr, cg, cb, a, colorLineWidth);
+                break;
+            }
+            default: {
+                // Crossed lines (X) — same as the canvas2d fallback.
+                const r0 = this.radius;
+                r.drawLine(x - r0, y - r0, x + r0, y + r0, 1, br, bg, bb, a);
+                r.drawLine(x + r0, y - r0, x - r0, y + r0, 1, br, bg, bb, a);
+                r.drawLine(x - r0, y - r0, x + r0, y + r0, colorLineWidth, cr, cg, cb, a);
+                r.drawLine(x + r0, y - r0, x - r0, y + r0, colorLineWidth, cr, cg, cb, a);
+                break;
+            }
+        }
+    }
+
+    _strokeClosed(r, ox, oy, p, cr, cg, cb, ca, lw) {
+        const n = p.length;
+        for (let i = 0; i < n; i += 2) {
+            const j = (i + 2) % n;
+            r.drawLine(ox + p[i], oy + p[i + 1], ox + p[j], oy + p[j + 1], lw, cr, cg, cb, ca);
+        }
     }
 }

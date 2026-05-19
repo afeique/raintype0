@@ -64,10 +64,57 @@ function send(res, status, headers, body) {
     else res.end();
 }
 
+// ── Colored request log ──────────────────────────────────────────────
+// ANSI escapes are honoured by every modern terminal; when stdout is a
+// pipe (CI, tee) Node sets isTTY=false and we silently drop colours so
+// log files stay clean. Colour mapping mirrors the convention used by
+// Vite, http-server, and morgan: green=2xx, cyan=3xx, yellow=4xx, red=5xx.
+
+// Force-enable when FORCE_COLOR is set (CI logs, dev tools that pipe
+// stdout). Force-disable when NO_COLOR is set (https://no-color.org).
+const wantColor = process.env.NO_COLOR ? false
+                : process.env.FORCE_COLOR ? true
+                : !!process.stdout.isTTY;
+
+const COLOR = wantColor ? {
+    reset:  '\x1b[0m',
+    dim:    '\x1b[2m',
+    grey:   '\x1b[90m',
+    cyan:   '\x1b[36m',
+    green:  '\x1b[32m',
+    yellow: '\x1b[33m',
+    red:    '\x1b[31m',
+    bold:   '\x1b[1m',
+} : {
+    reset: '', dim: '', grey: '', cyan: '', green: '', yellow: '', red: '', bold: '',
+};
+
+function statusColor(s) {
+    if (s >= 500) return COLOR.red;
+    if (s >= 400) return COLOR.yellow;
+    if (s >= 300) return COLOR.cyan;
+    return COLOR.green;
+}
+
+function methodColor(m) {
+    return m === 'GET' ? COLOR.green
+         : m === 'POST' ? COLOR.cyan
+         : m === 'DELETE' ? COLOR.red
+         : COLOR.yellow;
+}
+
 function logLine(req, status, bytes = '') {
     const ts = new Date().toISOString().slice(11, 19);
     const url = req.url.length > 60 ? req.url.slice(0, 57) + '...' : req.url;
-    console.log(`[${ts}] ${status} ${req.method.padEnd(4)} ${url} ${bytes}`);
+    const sc = statusColor(status);
+    const mc = methodColor(req.method);
+    console.log(
+        `${COLOR.grey}[${ts}]${COLOR.reset} ` +
+        `${sc}${COLOR.bold}${status}${COLOR.reset} ` +
+        `${mc}${req.method.padEnd(4)}${COLOR.reset} ` +
+        `${url} ` +
+        `${COLOR.dim}${bytes}${COLOR.reset}`,
+    );
 }
 
 const server = http.createServer((req, res) => {
@@ -133,10 +180,11 @@ server.on('error', (e) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`\n  RAINTYPE0 dev server`);
-    console.log(`  root:  ${ROOT}`);
-    console.log(`  url:   http://localhost:${PORT}/`);
-    console.log(`  press Ctrl-C to stop\n`);
+    const C = COLOR;
+    console.log(`\n  ${C.bold}${C.cyan}RAINTYPE0${C.reset} ${C.dim}dev server${C.reset}`);
+    console.log(`  ${C.grey}root:${C.reset}  ${ROOT}`);
+    console.log(`  ${C.grey}url:${C.reset}   ${C.green}http://localhost:${PORT}/${C.reset}`);
+    console.log(`  ${C.dim}press Ctrl-C to stop${C.reset}\n`);
 });
 
 // Friendly shutdown.

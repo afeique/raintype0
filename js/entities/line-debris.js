@@ -1,6 +1,6 @@
 // White line segments flung from asteroid edges on destruction.
 
-import { random } from '../core/utils.js';
+import { random, inView } from '../core/utils.js';
 
 export class LineDebris {
     constructor() { this.active = false; }
@@ -30,18 +30,22 @@ export class LineDebris {
         if (this.life <= 0) pool.release(this);
     }
 
-    draw(ctx) {
+    draw(r) {
         if (!this.active) return;
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        ctx.rotate(this.rot);
-        ctx.globalAlpha = Math.max(0, this.life);
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(this.p1.x, this.p1.y);
-        ctx.lineTo(this.p2.x, this.p2.y);
-        ctx.stroke();
-        ctx.restore();
+        const a = this.life > 1 ? 1 : (this.life < 0 ? 0 : this.life);
+        if (a <= 0) return;
+        // Coarse cull — the line segment can extend up to ~30 px from
+        // origin once rotated; 40 covers it comfortably.
+        if (!inView(this.x, this.y, 40)) return;
+        // Rotate p1, p2 by `rot` and translate by (x, y) — entities
+        // compute world coords themselves so the renderer interface has
+        // no transform stack.
+        const c = Math.cos(this.rot);
+        const s = Math.sin(this.rot);
+        const x1 = this.x + this.p1.x * c - this.p1.y * s;
+        const y1 = this.y + this.p1.x * s + this.p1.y * c;
+        const x2 = this.x + this.p2.x * c - this.p2.y * s;
+        const y2 = this.y + this.p2.x * s + this.p2.y * c;
+        r.drawLine(x1, y1, x2, y2, 1.5, 1, 1, 1, a);
     }
 }

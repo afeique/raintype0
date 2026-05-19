@@ -417,7 +417,32 @@ canvas {
 .title-char {
     display: inline-block;
     position: relative;
-    animation: color-cycle 10s linear infinite, wave 2s ease-in-out infinite;
+    /* --i / --n are set in title-screen.js per letter so the colour
+       wave flows across the word from left to right and each glyph
+       picks up at a different point in the rainbow. */
+    animation:
+        color-cycle 6s linear infinite,
+        wave 2.4s ease-in-out infinite,
+        sway 4.6s ease-in-out infinite;
+    animation-delay:
+        calc(var(--i, 0) * -0.55s),
+        calc(var(--i, 0) * -0.12s),
+        calc(var(--i, 0) *  0.18s);
+    will-change: transform, color, text-shadow;
+}
+
+/* Game-start "explosion" launch animation. Each letter flies in a
+   randomized direction stored in --launch-x/y/rot. The wave/sway/
+   colour-cycle animations are overridden by `animation:` shorthand
+   so the letter freezes on the trajectory. */
+.title-launching .title-char {
+    animation:
+        title-launch var(--launch-dur, 900ms) cubic-bezier(0.42, 0.0, 0.58, 1.0) forwards;
+    animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+#title-screen.title-screen-fading {
+    animation: title-screen-fade 950ms ease-out forwards;
 }
 
 #start-prompt {
@@ -515,14 +540,60 @@ canvas {
     50%      { transform: translateY(-15px); }
 }
 
+/* Subtle horizontal sway, layered on top of wave for a more organic
+   ribbon-of-letters motion (rainboids-style). */
+@keyframes sway {
+    0%, 100% { transform: translateX(0); }
+    25%      { transform: translateX(-3px); }
+    75%      { transform: translateX( 3px); }
+}
+
+/* 8-stop hue cycle — adds cyan, lime, and yellow stops between the
+   original blue→violet→magenta→orange→red beat, so the rainbow reads
+   as a full spectrum sweep rather than a violet-heavy loop. Glow
+   widened to 20 px and brightened to match the WebGL2 bloom feel. */
 @keyframes color-cycle {
-    0%   { color: #00F;    text-shadow: 0 0 15px #00F; }
-    16%  { color: #4B0082; text-shadow: 0 0 15px #4B0082; }
-    32%  { color: #8A2BE2; text-shadow: 0 0 15px #8A2BE2; }
-    48%  { color: #FF00FF; text-shadow: 0 0 15px #FF00FF; }
-    64%  { color: #FF4500; text-shadow: 0 0 15px #FF4500; }
-    80%  { color: #F00;    text-shadow: 0 0 15px #F00; }
-    100% { color: #00F;    text-shadow: 0 0 15px #00F; }
+    0%   { color: #00BFFF; text-shadow: 0 0 20px #00BFFF; }
+    12%  { color: #00F;    text-shadow: 0 0 20px #00F; }
+    24%  { color: #8A2BE2; text-shadow: 0 0 20px #8A2BE2; }
+    36%  { color: #FF00FF; text-shadow: 0 0 20px #FF00FF; }
+    48%  { color: #FF1493; text-shadow: 0 0 20px #FF1493; }
+    60%  { color: #FF4500; text-shadow: 0 0 20px #FF4500; }
+    72%  { color: #FFD700; text-shadow: 0 0 20px #FFD700; }
+    84%  { color: #7CFC00; text-shadow: 0 0 20px #7CFC00; }
+    100% { color: #00BFFF; text-shadow: 0 0 20px #00BFFF; }
+}
+
+/* Each letter flies outward to (--launch-x, --launch-y) with a
+   --launch-rot spin while scaling down to a point and blur-fading.
+   The trajectory vars are set per-letter in JS so the explosion
+   randomises every run. */
+@keyframes title-launch {
+    0% {
+        transform: translate(0, 0) rotate(0deg) scale(1);
+        opacity: 1;
+        filter: blur(0);
+    }
+    35% {
+        opacity: 1;
+        filter: blur(0);
+    }
+    100% {
+        transform:
+            translate(var(--launch-x, 0px), var(--launch-y, 0px))
+            rotate(var(--launch-rot, 720deg))
+            scale(0.05);
+        opacity: 0;
+        filter: blur(10px);
+    }
+}
+
+/* Vignette + subtitle + record line fade in parallel with the letter
+   launch so the entire overlay dissolves to black smoothly. */
+@keyframes title-screen-fade {
+    0%   { opacity: 1; }
+    60%  { opacity: 1; }
+    100% { opacity: 0; }
 }
 
 @keyframes pulse-opacity {

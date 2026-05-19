@@ -17,7 +17,15 @@ export const SAFE_ZONE = 250;
 
 export const STAR_COUNT = 150;
 export const MIN_STAR_DIST = 30;
-export const STAR_ATTR = 0.05;
+// Normal stars: per-frame pull multiplied by star depth (z = 0.5..4.5).
+// Original mono used 0.05/150 — too weak to actually scoop nearby
+// stars before they drifted out of range. 0.12 + 320 px is firm
+// enough that a star already inside the radius accelerates toward
+// the player faster than it can wrap-drift away, but still well
+// below the burst-star numbers so the green orbs feel distinctly
+// stronger.
+export const STAR_ATTR = 0.12;
+export const STAR_ATTRACT_DIST = 320;
 export const STAR_FRIC = 0.98;
 export const BURST_STAR_ATTRACT_DIST = 350;
 export const BURST_STAR_ATTR = 0.3;
@@ -58,3 +66,13 @@ export const Viewport = {
         this.height = h;
     },
 };
+
+// AABB intersection vs. the live viewport — used by entity draw() guards
+// to skip everything off-screen. Cheap (4 compares) and lets the renderer
+// avoid uploading + rasterising instances the user will never see.
+export function inView(x, y, radius) {
+    return x + radius >= 0
+        && x - radius <= Viewport.width
+        && y + radius >= 0
+        && y - radius <= Viewport.height;
+}

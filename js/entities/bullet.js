@@ -2,7 +2,9 @@
 // every other frame. Releases self when off-screen.
 
 import { BULLET_SPEED, SHIP_SIZE, Viewport } from '../core/utils.js';
-import { hsl } from '../core/color-cache.js';
+import { hslToRgb } from '../render/color-util.js';
+
+const _rgb = new Float32Array(3);
 
 export class Bullet {
     constructor() { this.active = false; }
@@ -25,8 +27,8 @@ export class Bullet {
         this.y += this.vel.y;
 
         if (this.life % 2 === 0) {
-            const color = hsl((this.life * 5) % 360, 100, 50);
-            pools.particles.get(this.x, this.y, 'phantom', color, this.radius);
+            const hue = (this.life * 5) % 360;
+            pools.particles.get(this.x, this.y, 'phantom', hue, this.radius);
         }
 
         if (this.x < 0 || this.x > Viewport.width || this.y < 0 || this.y > Viewport.height) {
@@ -34,11 +36,9 @@ export class Bullet {
         }
     }
 
-    draw(ctx) {
+    draw(r) {
         if (!this.active) return;
-        ctx.fillStyle = hsl((this.life * 5) % 360, 100, 50);
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, 2 * Math.PI);
-        ctx.fill();
+        hslToRgb((this.life * 5) % 360, 100, 50, _rgb);
+        r.fillCircle(this.x, this.y, this.radius, _rgb[0], _rgb[1], _rgb[2], 1);
     }
 }

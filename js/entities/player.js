@@ -9,6 +9,7 @@ import {
     random, wrap, Viewport,
 } from '../core/utils.js';
 import { findNearestAsteroid } from '../world/aim-assist.js';
+import { BLEND_ADDITIVE, BLEND_NORMAL } from '../render/renderer.js';
 
 const MOBILE_FIRE_INTERVAL_MS = 140; // a touch quicker than desktop's 200
 const MOBILE_AUTOFIRE_MAX_DIST = 1200;
@@ -89,17 +90,10 @@ export class Player {
     }
 
     // ── Mobile single-stick input + auto-aim + auto-fire ─────────────
-    //
-    // Stick = movement only (drag-to-move). Auto-aim points the ship at
-    // the nearest asteroid each frame. Auto-fire triggers on a timer
-    // when there's a target within range AND within ±25° cone of aim —
-    // matching the rainsrc HEAD model. Tightens the firing loop so it
-    // feels responsive without wasting shots into empty space.
 
     _updateMobile(mobileInput, pools, audio, haptic) {
         const { move } = mobileInput;
 
-        // Movement: stick vector → thrust in that direction.
         if (move.active && move.magnitude > 0.15) {
             this.isThrusting = true;
             const thrustDir = Math.atan2(move.y, move.x);
@@ -114,18 +108,11 @@ export class Player {
             this.vel.y *= SHIP_FRICTION;
         }
 
-        // Auto-aim — lock onto nearest asteroid each frame. If nothing
-        // exists yet (wave-transition gap), keep the last angle so the
-        // ship doesn't snap to a default direction.
         const target = findNearestAsteroid(this.x, this.y, pools, MOBILE_AUTOFIRE_MAX_DIST);
         if (target) {
             this.angle = Math.atan2(target.y - this.y, target.x - this.x);
         }
 
-        // Auto-fire — only when there's a target in cone & range. The
-        // cone test is unnecessary here since auto-aim already snaps to
-        // the target, but kept as a guard against frame-edge cases (e.g.
-        // target just released after a fragment split).
         if (target) {
             const now = performance.now();
             if (now - this._lastFireAt >= MOBILE_FIRE_INTERVAL_MS) {
@@ -164,31 +151,45 @@ export class Player {
         pools.bullets.get(this.x, this.y, angle);
     }
 
-    draw(ctx) {
+    draw(r) {
         if (!this.active) return;
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        ctx.rotate(this.angle + Math.PI / 2);
-        ctx.strokeStyle = '#0ff';
-        ctx.lineWidth = 2;
-        ctx.shadowColor = '#0ff';
-        ctx.shadowBlur = 15;
-        ctx.globalCompositeOperation = 'lighter';
-        const r = this.radius, w = 1.15;
-        ctx.beginPath();
-        ctx.moveTo(0, -r);
-        ctx.lineTo(r * 0.96 * w, r * 0.9);
-        ctx.lineTo(r * 0.6 * w, r * 0.9);
-        ctx.lineTo(0, -r * 0.1);
-        ctx.closePath();
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(0, -r);
-        ctx.lineTo(-r * 0.96 * w, r * 0.9);
-        ctx.lineTo(-r * 0.6 * w, r * 0.9);
-        ctx.lineTo(0, -r * 0.1);
-        ctx.closePath();
-        ctx.stroke();
-        ctx.restore();
+        r.setLayer('overlay');
+        // Ship draws as two triangles (rotated by angle + π/2). Compute
+        // world-space vertices and emit each edge through drawGlowLine
+        // so the renderer can synthesise the cyan halo.
+        const x = this.x, y = this.y, R = this.radius, w = 1.15;
+        // Local-space vertices (before rotation).
+        const lx = [0, R * 0.96 * w, R * 0.6 * w, 0, -R * 0.96 * w, -R * 0.6 * w];
+        const ly = [-R, R * 0.9, R * 0.9, -R * 0.1, R * 0.9, R * 0.9];
+
+        // The original draws "rotate(angle + π/2)" then sketches with
+        // nose at (0, -R). Apply that same rotation here.
+        const rot = this.angle + Math.PI / 2;
+        const c = Math.cos(rot), s = Math.sin(rot);
+        const wx = new Array(6);
+        const wy = new Array(6);
+        for (let i = 0; i < 6; i++) {
+            wx[i] = x + lx[i] * c - ly[i] * s;
+            wy[i] = y + lx[i] * s + ly[i] * c;
+        }
+
+        // Original used 'lighter' compositing — additive blend for both
+        // the line and its shadow halo. drawGlowLine emits the halo as
+        // an additive soft line beneath the crisp stroke.
+        r.setBlend(BLEND_ADDITIVE);
+        const lw = 2;
+        const glowW = 15;
+        // Right triangle: 0 → 1 → 2 → 3 → 0
+        r.drawGlowLine(wx[0], wy[0], wx[1], wy[1], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        r.drawGlowLine(wx[1], wy[1], wx[2], wy[2], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        r.drawGlowLine(wx[2], wy[2], wx[3], wy[3], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        r.drawGlowLine(wx[3], wy[3], wx[0], wy[0], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        // Left triangle: 0 → 4 → 5 → 3 → 0
+        r.drawGlowLine(wx[0], wy[0], wx[4], wy[4], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        r.drawGlowLine(wx[4], wy[4], wx[5], wy[5], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        r.drawGlowLine(wx[5], wy[5], wx[3], wy[3], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        r.drawGlowLine(wx[3], wy[3], wx[0], wy[0], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+        r.setBlend(BLEND_NORMAL);
+        r.setLayer('bulk');
     }
 }

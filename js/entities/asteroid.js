@@ -7,9 +7,10 @@
 //     across edges at the bullet impact point
 //   • Directional debris streaks in the hit direction
 
-import { random, AST_SPEED, Viewport } from '../core/utils.js';
+import { random, inView, AST_SPEED, Viewport } from '../core/utils.js';
 import { frameClock } from '../core/frame-clock.js';
-import { hsl } from '../core/color-cache.js';
+import { hslToRgb } from '../render/color-util.js';
+import { BLEND_ADDITIVE, BLEND_NORMAL } from '../render/renderer.js';
 
 // Icosahedron edges — 12 vertices, 30 edges.
 const ICOSAHEDRON_EDGES = [
@@ -18,7 +19,6 @@ const ICOSAHEDRON_EDGES = [
     [4,11],[5,9],[5,11],[6,7],[6,8],[6,10],[7,8],[7,10],[8,9],[10,11],
 ];
 
-// Base icosahedron vertices (golden ratio).
 const T = (1 + Math.sqrt(5)) / 2;
 const BASE_VERTS = [
     [-1, T, 0], [1, T, 0], [-1, -T, 0], [1, -T, 0],
@@ -27,6 +27,8 @@ const BASE_VERTS = [
 ];
 
 const HIT_FLASH_MAX = 10;
+
+const _rgb = new Float32Array(3);
 
 export class Asteroid {
     constructor() {
@@ -54,8 +56,6 @@ export class Asteroid {
         this.active = true;
         this._hitFlashTimer = 0;
 
-        // Unique per-asteroid hue palette (rainsrc HEAD design).
-        // 80% teal→cyan→blue→violet, 20% warm gold for variety.
         this.baseHue = Math.random() < 0.2
             ? 40 + Math.random() * 20
             : 150 + Math.random() * 130;
@@ -126,9 +126,6 @@ export class Asteroid {
         this.project();
     }
 
-    // Called by the collision handler at the moment of bullet impact.
-    // Stores the world-space hit point and angle so the next 10 draws
-    // can paint the localised flash + propagating wavefront.
     registerHit(x, y, angle) {
         this._hitFlashTimer = HIT_FLASH_MAX;
         this._hitPoint.x = x;
@@ -136,98 +133,80 @@ export class Asteroid {
         this._hitAngle = angle ?? 0;
     }
 
-    draw(ctx) {
+    draw(r) {
         if (!this.active) return;
+        // Asteroids wrap with a 4×baseRadius buffer so they routinely
+        // sit fully off-screen until they wrap back in. Skip them — the
+        // wireframe is 30 lines + per-edge HSL math, the biggest single
+        // saving in this entity set.
+        if (!inView(this.x, this.y, this.radius * 1.4)) return;
 
-        ctx.save();
-        ctx.translate(this.x, this.y);
+        r.setLayer('overlay');
+        r.setBlend(BLEND_NORMAL);
+        this._drawWireframe(r);
 
-        this._drawWireframe(ctx);
-
-        // Propagating wavefront across edges — only while flashing.
-        if (this._hitFlashTimer > 0) this._drawHitWavefront(ctx);
-
-        ctx.restore();
-
-        // Localised radial flash lives in world-space (post-restore).
         if (this._hitFlashTimer > 0) {
-            this._drawHitFlash(ctx);
+            r.setBlend(BLEND_ADDITIVE);
+            this._drawHitWavefront(r);
+            this._drawHitFlash(r);
+            r.setBlend(BLEND_NORMAL);
             this._hitFlashTimer--;
         }
+        r.setLayer('bulk');
     }
 
-    // ── Wireframe pass (black underlay + per-edge pulsing colour) ──────
-
-    _drawWireframe(ctx) {
+    _drawWireframe(r) {
         const now = frameClock.now;
+        const ox = this.x, oy = this.y;
+        const verts = this.projectedVertices;
 
-        // Black underlay — one beginPath + stroke for the whole shape,
-        // thicker than the colour pass so each edge gets an outline.
-        // Makes wireframes legible against bright starfield / particles.
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-        ctx.globalAlpha = 0.85;
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 4.5;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
+        // Black underlay — one thick stroke per edge so wireframes read
+        // against the starfield.
         for (let i = 0; i < this.edges.length; i++) {
             const e = this.edges[i];
-            const v1 = this.projectedVertices[e[0]];
-            const v2 = this.projectedVertices[e[1]];
+            const v1 = verts[e[0]];
+            const v2 = verts[e[1]];
             if (!v1 || !v2) continue;
-            ctx.moveTo(v1.x, v1.y);
-            ctx.lineTo(v2.x, v2.y);
+            r.drawLine(ox + v1.x, oy + v1.y, ox + v2.x, oy + v2.y, 4.5, 0, 0, 0, 0.85);
         }
-        ctx.stroke();
 
-        // Colour pass — each edge gets its own time-cycled HSL stroke.
-        // hue = baseHue + cycleOffset + edgeIndex/total × hueSpread.
-        // Alpha falls off with depth (pseudo-3D look).
-        ctx.lineWidth = 2;
-        ctx.lineCap = 'butt';
+        // Color pass — each edge time-cycled HSL, depth-faded alpha.
         const fovInvRange = 1 / (this.fov + this.radius);
+        const baseAlpha = 1;
         for (let i = 0; i < this.edges.length; i++) {
             const e = this.edges[i];
-            const v1 = this.projectedVertices[e[0]];
-            const v2 = this.projectedVertices[e[1]];
+            const v1 = verts[e[0]];
+            const v2 = verts[e[1]];
             if (!v1 || !v2) continue;
             const avg = (v1.depth + v2.depth) * 0.5;
             const alpha = Math.max(0.2,
-                Math.pow(Math.max(0, (this.fov - avg) * fovInvRange), 2.0));
+                Math.pow(Math.max(0, (this.fov - avg) * fovInvRange), 2.0)) * baseAlpha;
             const hue = (this.baseHue
                 + now / this.hueCycleSpeed
                 + (i / this.edges.length) * this.hueSpread) % 360;
-            ctx.globalAlpha = alpha;
-            ctx.strokeStyle = hsl(hue, this.saturation, this.lightness);
-            ctx.beginPath();
-            ctx.moveTo(v1.x, v1.y);
-            ctx.lineTo(v2.x, v2.y);
-            ctx.stroke();
+            hslToRgb(hue, this.saturation, this.lightness, _rgb);
+            r.drawLine(
+                ox + v1.x, oy + v1.y, ox + v2.x, oy + v2.y,
+                2, _rgb[0], _rgb[1], _rgb[2], alpha,
+            );
         }
-        ctx.globalAlpha = 1;
     }
 
-    // ── Hit wavefront (in entity-local coords, inside save/restore) ───
-
-    _drawHitWavefront(ctx) {
-        if (!this.projectedVertices) return;
+    _drawHitWavefront(r) {
+        const verts = this.projectedVertices;
+        if (!verts) return;
         const progress = 1 - (this._hitFlashTimer / HIT_FLASH_MAX);
-        // Convert world-space hit point into entity-local coords.
         const hx = this._hitPoint.x - this.x;
         const hy = this._hitPoint.y - this.y;
         const maxDist = Math.max(1, this.radius * 2);
         const wave = progress * 1.1;
         const waveWidth = 0.32;
-
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.lineWidth = 2.5;
-        ctx.lineCap = 'round';
+        const ox = this.x, oy = this.y;
 
         for (let i = 0; i < this.edges.length; i++) {
             const e = this.edges[i];
-            const v1 = this.projectedVertices[e[0]];
-            const v2 = this.projectedVertices[e[1]];
+            const v1 = verts[e[0]];
+            const v2 = verts[e[1]];
             if (!v1 || !v2) continue;
             const mx = (v1.x + v2.x) * 0.5;
             const my = (v1.y + v2.y) * 0.5;
@@ -235,29 +214,18 @@ export class Asteroid {
             const u = (wave - dNorm) / waveWidth;
             const intensity = Math.exp(-u * u);
             if (intensity < 0.02) continue;
-            ctx.globalAlpha = Math.min(1, intensity);
-            ctx.strokeStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.moveTo(v1.x, v1.y);
-            ctx.lineTo(v2.x, v2.y);
-            ctx.stroke();
+            const a = Math.min(1, intensity);
+            r.drawLine(ox + v1.x, oy + v1.y, ox + v2.x, oy + v2.y, 2.5, 1, 1, 1, a);
         }
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.lineCap = 'butt';
     }
 
-    // ── Localised flash (world-space, AFTER the entity translate) ─────
-
-    _drawHitFlash(ctx) {
+    _drawHitFlash(r) {
         const t = this._hitFlashTimer;
         const alpha = t / HIT_FLASH_MAX;
         const progress = 1 - alpha;
         const fr = this.radius * 0.65;
 
-        // Clamp the visible flash centre to within 0.85R of the asteroid
-        // centre so a glancing edge-hit doesn't paint half its glow into
-        // empty space.
+        // Clamp the visible flash centre to within 0.85R of the asteroid.
         const dx0 = this._hitPoint.x - this.x;
         const dy0 = this._hitPoint.y - this.y;
         const d0 = Math.hypot(dx0, dy0);
@@ -265,35 +233,32 @@ export class Asteroid {
         const cx = d0 > maxDist ? this.x + (dx0 / d0) * maxDist : this._hitPoint.x;
         const cy = d0 > maxDist ? this.y + (dy0 / d0) * maxDist : this._hitPoint.y;
 
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-
         // Radial gradient — white core fading to cool blue.
         const flashAlpha = alpha * 0.7;
         const flashRadius = fr * (1 + progress * 0.4);
-        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, flashRadius);
-        grad.addColorStop(0,   `rgba(255, 255, 255, ${flashAlpha})`);
-        grad.addColorStop(0.5, `rgba(200, 220, 255, ${flashAlpha * 0.35})`);
-        grad.addColorStop(1,   'rgba(150, 200, 255, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(cx, cy, flashRadius, 0, Math.PI * 2);
-        ctx.fill();
+        r.drawRadialFlash(
+            cx, cy, flashRadius,
+            1,             1,             1,             flashAlpha,
+            200 / 255,     220 / 255,     1,             flashAlpha * 0.35,
+            150 / 255,     200 / 255,     1,             0,
+        );
 
         // Expanding ring kicks in after 10% of the flash.
         if (progress > 0.1) {
             const ringProgress = (progress - 0.1) / 0.9;
             const ringRadius = fr * (0.3 + ringProgress * 1.8);
             const ringAlpha = (1 - ringProgress) * 0.3;
-            ctx.strokeStyle = `rgba(180, 220, 255, ${ringAlpha})`;
-            ctx.lineWidth = Math.max(1, fr * 0.08 * (1 - ringProgress));
-            ctx.beginPath();
-            ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
-            ctx.stroke();
+            const ringW = Math.max(1, fr * 0.08 * (1 - ringProgress));
+            r.strokeRing(cx, cy, ringRadius, ringW, 180 / 255, 220 / 255, 1, ringAlpha);
         }
 
         // 4 directional debris streaks in the bullet's travel direction.
-        const colors = ['255,255,255', '120,235,255', '255,255,150', '190,150,255'];
+        const colors = [
+            [1, 1, 1],
+            [120 / 255, 235 / 255, 1],
+            [1, 1, 150 / 255],
+            [190 / 255, 150 / 255, 1],
+        ];
         for (let i = 0; i < 4; i++) {
             const angle = this._hitAngle + (i / 4 - 0.375) * 1.5;
             const speed = 0.5 + (i * 31 % 10) * 0.06;
@@ -302,11 +267,8 @@ export class Asteroid {
             const ddy = Math.sin(angle) * dist;
             const sz = fr * (0.18 - progress * 0.09);
             if (sz <= 0) continue;
-            ctx.fillStyle = `rgba(${colors[i]}, ${alpha * 0.5})`;
-            ctx.beginPath();
-            ctx.arc(cx + ddx, cy + ddy, sz, 0, Math.PI * 2);
-            ctx.fill();
+            const col = colors[i];
+            r.fillCircle(cx + ddx, cy + ddy, sz, col[0], col[1], col[2], alpha * 0.5);
         }
-        ctx.restore();
     }
 }
