@@ -6,15 +6,15 @@
   "description": "RAINTYPE0 — classic asteroids hybrid. monosrc visuals + modernised modular codebase. Zero-build static game.",
   "main": "js/main.js",
   "scripts": {
-    "predev": "node tools/kill-port.js 8080",
-    "dev": "node tools/server.js --port 8080",
+    "dev": "node tools/scripts/dev-server.mjs -o -c-1",
+    "dev:legacy": "node tools/server.js --port 8080",
     "start": "npm run dev",
     "generate-playlist": "node tools/scripts/generate-playlist.js",
     "generate-sfx": "node tools/scripts/generate-sfx.js"
   },
   "devDependencies": {
+    "http-server": "^14.1.1",
     "jsfxr": "^1.4.0",
     "jsmediatags": "^3.9.7"
   }
 }
-
