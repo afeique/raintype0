@@ -264,6 +264,35 @@ struct VsOut {
 }
 `;
 
+// Textured sprite (nebula clouds). group 0 = globals (worldToClip),
+// group 1 = per-sprite uniform + texture + sampler.
+const SPRITE_WGSL = COMMON_HEADER + `
+struct SprU { center: vec2f, size: vec2f, rotation: f32, alpha: f32 };
+@group(1) @binding(0) var<uniform> u_spr: SprU;
+@group(1) @binding(1) var t_spr: texture_2d<f32>;
+@group(1) @binding(2) var s_spr: sampler;
+
+struct VsIn { @location(0) quad: vec2f, @location(1) uv: vec2f };
+struct VsOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
+
+@vertex fn vs(in: VsIn) -> VsOut {
+    var out: VsOut;
+    let c = cos(u_spr.rotation);
+    let s = sin(u_spr.rotation);
+    let scaled = in.quad * u_spr.size;
+    let rot = vec2f(scaled.x * c - scaled.y * s, scaled.x * s + scaled.y * c);
+    let world = u_spr.center + rot;
+    out.uv = in.uv;
+    out.pos = worldToClip(world);
+    return out;
+}
+@fragment fn fs(in: VsOut) -> @location(0) vec4f {
+    let t = textureSample(t_spr, s_spr, in.uv);
+    if (t.a <= 0.0) { discard; }
+    return vec4f(t.rgb, t.a * u_spr.alpha);
+}
+`;
+
 // ── Per-batch metadata: instance attribute layout ─────────────────────
 
 const BATCH_SPECS = {
@@ -526,6 +555,64 @@ export class WebGPURenderer extends Renderer {
             primitive: { topology: 'triangle-strip' },
         });
         this.sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' });
+        this.linearSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+        // ── Sprite pipeline (nebula clouds) ──────────────────────────
+        const blendNormalSpr = {
+            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' },
+            alpha: { srcFactor: 'one',       dstFactor: 'one-minus-src-alpha' },
+        };
+        const blendAddSpr = {
+            color: { srcFactor: 'src-alpha', dstFactor: 'one' },
+            alpha: { srcFactor: 'one',       dstFactor: 'one' },
+        };
+        const spriteModule = device.createShaderModule({ code: SPRITE_WGSL });
+        const spriteBgl = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+            ],
+        });
+        this.spriteBgl = spriteBgl;
+        const spriteLayout = device.createPipelineLayout({
+            bindGroupLayouts: [globalsBgl, spriteBgl],
+        });
+        const spriteVertexBuffers = [{
+            arrayStride: 16,
+            attributes: [
+                { shaderLocation: 0, format: 'float32x2', offset: 0 }, // quad
+                { shaderLocation: 1, format: 'float32x2', offset: 8 }, // uv
+            ],
+        }];
+        this.pipelineSprite = {};
+        for (const [mode, blend] of [['normal', blendNormalSpr], ['additive', blendAddSpr]]) {
+            this.pipelineSprite[mode] = device.createRenderPipeline({
+                layout: spriteLayout,
+                vertex: { module: spriteModule, entryPoint: 'vs', buffers: spriteVertexBuffers },
+                fragment: {
+                    module: spriteModule, entryPoint: 'fs',
+                    targets: [{ format: this.surfaceFormat, blend }],
+                },
+                primitive: { topology: 'triangle-strip' },
+            });
+        }
+
+        // Ring of per-sprite uniform buffers — each drawSprite in a frame
+        // grabs a distinct slot so multiple sprites in one render pass
+        // don't all read the last-written uniforms (queue.writeBuffer
+        // coalesces by region, not by draw). 32 slots >> nebula count.
+        this.SPRITE_RING = 32;
+        this.spriteUniformBuffers = [];
+        for (let i = 0; i < this.SPRITE_RING; i++) {
+            this.spriteUniformBuffers.push(device.createBuffer({
+                size: 32, // vec2 + vec2 + f32 + f32, padded to 16-multiple
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            }));
+        }
+        this._spriteScratch = new Float32Array(8);
+        this._spriteIdx = 0;
+        this._textures = new Map();
     }
 
     _initBatches() {
@@ -595,6 +682,18 @@ export class WebGPURenderer extends Renderer {
             size: lineQuad.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
         });
         this.device.queue.writeBuffer(this.lineQuadVbo, 0, lineQuad);
+
+        // Sprite quad — interleaved [pos.xy in -0.5..0.5, uv.xy].
+        const spriteQuad = new Float32Array([
+            -0.5, -0.5,  0, 1,
+             0.5, -0.5,  1, 1,
+            -0.5,  0.5,  0, 0,
+             0.5,  0.5,  1, 0,
+        ]);
+        this.spriteVbo = this.device.createBuffer({
+            size: spriteQuad.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
+        this.device.queue.writeBuffer(this.spriteVbo, 0, spriteQuad);
     }
 
     resize(w, h) {
@@ -611,6 +710,7 @@ export class WebGPURenderer extends Renderer {
         this._blend = BLEND_NORMAL;
         // Reset all batch counts.
         for (const b of Object.values(this.batches)) b.count = 0;
+        this._spriteIdx = 0;
 
         this._writeGlobals();
 
@@ -816,5 +916,58 @@ export class WebGPURenderer extends Renderer {
         s[i++] = mR; s[i++] = mG; s[i++] = mB; s[i++] = mA;
         s[i++] = oR; s[i++] = oG; s[i++] = oB; s[i++] = oA;
         batch.count++;
+    }
+
+    // ── Textured sprites (nebula clouds) ──────────────────────────────
+
+    registerTexture(id, source) {
+        const device = this.device;
+        const w = source.width, h = source.height;
+        let entry = this._textures.get(id);
+        if (!entry || entry.w !== w || entry.h !== h) {
+            if (entry) entry.texture.destroy();
+            const texture = device.createTexture({
+                size: { width: w, height: h },
+                format: 'rgba8unorm',
+                usage: GPUTextureUsage.TEXTURE_BINDING
+                     | GPUTextureUsage.COPY_DST
+                     | GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            entry = { texture, view: texture.createView(), w, h };
+            this._textures.set(id, entry);
+        }
+        device.queue.copyExternalImageToTexture(
+            { source }, { texture: entry.texture }, { width: w, height: h },
+        );
+    }
+
+    drawSprite(id, cx, cy, width, height, rotation, alpha) {
+        const entry = this._textures.get(id);
+        if (!entry || alpha <= 0) return;
+        if (this._spriteIdx >= this.SPRITE_RING) return; // ring exhausted this frame
+        this.flushAll(); // preserve draw order vs batched primitives
+
+        const slot = this._spriteIdx++;
+        const ubo = this.spriteUniformBuffers[slot];
+        const s = this._spriteScratch;
+        s[0] = cx; s[1] = cy; s[2] = width; s[3] = height;
+        s[4] = rotation; s[5] = alpha; s[6] = 0; s[7] = 0;
+        this.device.queue.writeBuffer(ubo, 0, s);
+
+        const bg = this.device.createBindGroup({
+            layout: this.spriteBgl,
+            entries: [
+                { binding: 0, resource: { buffer: ubo } },
+                { binding: 1, resource: entry.view },
+                { binding: 2, resource: this.linearSampler },
+            ],
+        });
+
+        const pass = this._pass;
+        pass.setPipeline(this.pipelineSprite[this._blend === BLEND_ADDITIVE ? 'additive' : 'normal']);
+        pass.setBindGroup(0, this.globalsBg);
+        pass.setBindGroup(1, bg);
+        pass.setVertexBuffer(0, this.spriteVbo);
+        pass.draw(4, 1, 0, 0);
     }
 }

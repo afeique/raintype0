@@ -117,4 +117,21 @@ export class Renderer {
         midR,   midG,   midB,   midA,
         outerR, outerG, outerB, outerA,
     ) {}
+
+    // ── Textured sprites ──────────────────────────────────────────────
+
+    /**
+     * Register a pre-rendered RGBA texture under a string id. `source`
+     * is an HTMLCanvasElement / ImageBitmap. Call once at setup; the
+     * backend uploads it (GL texture / GPU texture) or just stores the
+     * canvas (canvas2d). Safe to call again with the same id to replace.
+     */
+    registerTexture(id, source) {}
+
+    /**
+     * Draw a registered texture centered at (cx, cy), scaled to
+     * (width, height), rotated by `rotation` radians, multiplied by
+     * `alpha`. Honors the current blend mode. Used by the nebula layer.
+     */
+    drawSprite(id, cx, cy, width, height, rotation, alpha) {}
 }

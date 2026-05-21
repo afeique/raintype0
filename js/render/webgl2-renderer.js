@@ -267,6 +267,40 @@ void main() {
 }
 `;
 
+// ── 5b. Textured sprite (nebula clouds) ───────────────────────────────
+//
+// A single textured quad transformed by center / size / rotation in
+// world space, multiplied by a constant alpha. One draw call per
+// sprite (there are only a handful of nebula clouds, so no instancing).
+
+const SPRITE_VS = VS_HEADER + `
+in vec2 a_quad;          // [-0.5, 0.5]^2
+in vec2 a_uv;            // [0, 1]^2
+uniform vec2 u_center;
+uniform vec2 u_size;
+uniform float u_rotation;
+out vec2 v_uv;
+void main() {
+    float c = cos(u_rotation);
+    float s = sin(u_rotation);
+    vec2 scaled = a_quad * u_size;
+    vec2 rot = vec2(scaled.x * c - scaled.y * s, scaled.x * s + scaled.y * c);
+    vec2 world = u_center + rot;
+    v_uv = a_uv;
+    gl_Position = vec4(worldToClip(world), 0.0, 1.0);
+}
+`;
+const SPRITE_FS = FS_HEADER + `
+in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform float u_alpha;
+void main() {
+    vec4 t = texture(u_tex, v_uv);
+    if (t.a <= 0.0) discard;
+    fragColor = vec4(t.rgb, t.a * u_alpha);
+}
+`;
+
 // ── 6. Full-screen blit / veil ────────────────────────────────────────
 
 const FULLSCREEN_VS = `#version 300 es
@@ -491,6 +525,18 @@ export class WebGL2Renderer extends Renderer {
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
             -1, -1,  1, -1,  -1, 1,  1, 1,
         ]), gl.STATIC_DRAW);
+
+        // Sprite quad — interleaved [pos.xy in -0.5..0.5, uv.xy in 0..1].
+        // UV.y flipped (1 - v) so the canvas-baked texture isn't drawn
+        // upside-down in GL's bottom-left origin space.
+        this.spriteQuad = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteQuad);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -0.5, -0.5,  0, 1,
+             0.5, -0.5,  1, 1,
+            -0.5,  0.5,  0, 0,
+             0.5,  0.5,  1, 0,
+        ]), gl.STATIC_DRAW);
     }
 
     _initPrograms() {
@@ -505,9 +551,12 @@ export class WebGL2Renderer extends Renderer {
         this.progBright = link(gl, FULLSCREEN_VS, BRIGHT_PASS_FS);
         this.progBlur   = link(gl, FULLSCREEN_VS, BLUR_FS);
         this.progComp   = link(gl, FULLSCREEN_VS, COMPOSITE_FS);
+        this.progSprite = link(gl, SPRITE_VS, SPRITE_FS);
 
-        // Cache uniform locations for the world programs (all share u_viewport, u_shake).
-        this.worldPrograms = [this.progCircle, this.progRing, this.progPoint, this.progLine, this.progRadial];
+        // Cache uniform locations for the world programs (all share
+        // u_viewport, u_shake — including the sprite program so nebula
+        // clouds transform in the same world space).
+        this.worldPrograms = [this.progCircle, this.progRing, this.progPoint, this.progLine, this.progRadial, this.progSprite];
         this.uViewport = new Map();
         this.uShake = new Map();
         for (const p of this.worldPrograms) {
@@ -516,6 +565,14 @@ export class WebGL2Renderer extends Renderer {
         }
         this.uBlitTex   = gl.getUniformLocation(this.progBlit, 'u_tex');
         this.uVeilColor = gl.getUniformLocation(this.progVeil, 'u_color');
+
+        // Sprite uniforms.
+        this.uSprCenter   = gl.getUniformLocation(this.progSprite, 'u_center');
+        this.uSprSize     = gl.getUniformLocation(this.progSprite, 'u_size');
+        this.uSprRotation = gl.getUniformLocation(this.progSprite, 'u_rotation');
+        this.uSprTex      = gl.getUniformLocation(this.progSprite, 'u_tex');
+        this.uSprAlpha    = gl.getUniformLocation(this.progSprite, 'u_alpha');
+        this._textures = new Map();
 
         // Bloom uniforms.
         this.uBrightScene     = gl.getUniformLocation(this.progBright, 'u_scene');
@@ -646,6 +703,19 @@ export class WebGL2Renderer extends Renderer {
         this.brightVao  = mkFullVao(this.progBright);
         this.blurVao    = mkFullVao(this.progBlur);
         this.compVao    = mkFullVao(this.progComp);
+
+        // Sprite VAO — interleaved pos(2) + uv(2), stride 16 bytes.
+        this.spriteVao = gl.createVertexArray();
+        gl.bindVertexArray(this.spriteVao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteQuad);
+        {
+            const aQuad = gl.getAttribLocation(this.progSprite, 'a_quad');
+            const aUV   = gl.getAttribLocation(this.progSprite, 'a_uv');
+            gl.enableVertexAttribArray(aQuad);
+            gl.vertexAttribPointer(aQuad, 2, gl.FLOAT, false, 16, 0);
+            gl.enableVertexAttribArray(aUV);
+            gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 16, 8);
+        }
         gl.bindVertexArray(null);
     }
 
@@ -978,5 +1048,43 @@ export class WebGL2Renderer extends Renderer {
         s[i++] = mR; s[i++] = mG; s[i++] = mB; s[i++] = mA;
         s[i++] = oR; s[i++] = oG; s[i++] = oB; s[i++] = oA;
         batch.count++;
+    }
+
+    // ── Textured sprites (nebula clouds) ──────────────────────────────
+
+    registerTexture(id, source) {
+        const gl = this.gl;
+        let tex = this._textures.get(id);
+        if (!tex) {
+            tex = gl.createTexture();
+            this._textures.set(id, tex);
+        }
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    drawSprite(id, cx, cy, width, height, rotation, alpha) {
+        const tex = this._textures.get(id);
+        if (!tex || alpha <= 0) return;
+        // Sprites use a one-off draw (not batched), so flush any pending
+        // batched primitives first to preserve draw order.
+        this.flushAll();
+        const gl = this.gl;
+        gl.useProgram(this.progSprite);
+        gl.bindVertexArray(this.spriteVao);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.uniform1i(this.uSprTex, 0);
+        gl.uniform2f(this.uSprCenter, cx, cy);
+        gl.uniform2f(this.uSprSize, width, height);
+        gl.uniform1f(this.uSprRotation, rotation);
+        gl.uniform1f(this.uSprAlpha, alpha);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindVertexArray(null);
     }
 }

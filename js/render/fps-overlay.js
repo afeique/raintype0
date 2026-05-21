@@ -12,7 +12,7 @@
 // DOM refresh is throttled to ~4 Hz so the overlay itself doesn't bias
 // the measurement (full DOM rewrite at 60 Hz would skew frametimes).
 
-const CANONICAL_ORDER = ['stars', 'particles', 'bullets', 'lineDebris', 'asteroids'];
+const CANONICAL_ORDER = ['stars', 'money', 'particles', 'bullets', 'lineDebris', 'asteroids'];
 const FPS_SAMPLE_COUNT = 60;
 const DOM_REFRESH_INTERVAL = 15;   // 60 fps / 15 = 4 refreshes/sec
 const NAME_COL_WIDTH = 12;

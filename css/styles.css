@@ -419,26 +419,46 @@ canvas {
     position: relative;
     /* --i / --n are set in title-screen.js per letter so the colour
        wave flows across the word from left to right and each glyph
-       picks up at a different point in the rainbow. */
+       picks up at a different point in the rainbow. The per-letter
+       animation-delay on `wave` also offsets the bob, so the vertical
+       wave travels across the word instead of every letter bobbing in
+       unison. NOTE: `wave` must be the only transform-driving animation
+       here — see the @keyframes wave comment for why sway was folded in. */
     animation:
         color-cycle 6s linear infinite,
-        wave 2.4s ease-in-out infinite,
-        sway 4.6s ease-in-out infinite;
+        wave 2.4s ease-in-out infinite;
     animation-delay:
         calc(var(--i, 0) * -0.55s),
-        calc(var(--i, 0) * -0.12s),
-        calc(var(--i, 0) *  0.18s);
+        calc(var(--i, 0) * -0.12s);
+    /* Hard pixel outline — parity with rainboids drawWavyText({outline:
+       true}), which strokes black under each glyph then fills the rainbow
+       on top. paint-order:stroke fill is what puts the stroke UNDERNEATH
+       the colour fill; -webkit-text-stroke on its own paints over the fill
+       and eats into the glyph weight. Width ≈ fontSize/12 (rainboids'
+       title outlineWidth), floored at 3px for small viewports. Both props
+       are static, so the outline is retained through the idle wave AND the
+       launch animation — it never drops to a bare white glyph. */
+    paint-order: stroke fill;
+    -webkit-text-stroke: max(3px, 0.083em) rgba(0, 0, 0, 0.92);
     will-change: transform, color, text-shadow;
 }
 
 /* Game-start "explosion" launch animation. Each letter flies in a
-   randomized direction stored in --launch-x/y/rot. The wave/sway/
-   colour-cycle animations are overridden by `animation:` shorthand
-   so the letter freezes on the trajectory. */
+   randomized direction stored in --launch-x/y/rot. color-cycle is kept
+   running alongside title-launch so the letters keep their rainbow
+   colour + glow as they fly off. Without it, the `animation:` shorthand
+   would drop color-cycle and the glyphs would snap to the inherited
+   white body colour with no text-shadow ("turns all white"). The two
+   don't fight: title-launch owns transform/opacity/blur, color-cycle
+   owns color/text-shadow. The idle `wave` bob is intentionally dropped —
+   title-launch's transform takes over the trajectory. */
 .title-launching .title-char {
     animation:
+        color-cycle 6s linear infinite,
         title-launch var(--launch-dur, 900ms) cubic-bezier(0.42, 0.0, 0.58, 1.0) forwards;
-    animation-delay: calc(var(--i, 0) * 45ms);
+    animation-delay:
+        calc(var(--i, 0) * -0.55s),
+        calc(var(--i, 0) * 45ms);
 }
 
 #title-screen.title-screen-fading {
@@ -535,17 +555,20 @@ canvas {
     100% { transform: scale(1);    opacity: 1; }
 }
 
+/* Wavy bob — a single transform animation carrying BOTH the vertical
+   rise and a gentle horizontal sway. These used to be two animations
+   (wave + sway), but two CSS animations on the same element that both
+   drive `transform` don't compose: the one listed last wins, so `sway`
+   (±3px) silently overrode `wave` (-15px) and the title barely moved.
+   Folding both axes into one keyframe restores the wave; the per-letter
+   animation-delay makes it travel across the word. rainboids uses a
+   plain vertical wave — this keeps that bob and layers the sway on top
+   without the property conflict. */
 @keyframes wave {
-    0%, 100% { transform: translateY(0); }
-    50%      { transform: translateY(-15px); }
-}
-
-/* Subtle horizontal sway, layered on top of wave for a more organic
-   ribbon-of-letters motion (rainboids-style). */
-@keyframes sway {
-    0%, 100% { transform: translateX(0); }
-    25%      { transform: translateX(-3px); }
-    75%      { transform: translateX( 3px); }
+    0%, 100% { transform: translate(  0px,   0px); }
+    25%      { transform: translate(-3px,  -8px); }
+    50%      { transform: translate(  0px, -15px); }
+    75%      { transform: translate( 3px,  -8px); }
 }
 
 /* 8-stop hue cycle — adds cyan, lime, and yellow stops between the

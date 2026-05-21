@@ -78,15 +78,27 @@ export function parseCssColor(str) {
 // Pre-baked palettes — every named color the game uses, exposed as
 // Float32Array(3) so renderers can read them without re-parsing.
 export const PALETTE = {
-    cyan:        hexToRgb('#0ff'),
-    white:       hexToRgb('#fff'),
-    gold:        hexToRgb('#ffd700'),
-    burstGreen:  hexToRgb('#00ff7f'),
+    cyan:   hexToRgb('#0ff'),
+    white:  hexToRgb('#fff'),
 };
 
+// Wider, richer normal-star palette. Original was 8 pastel violets /
+// pinks; this adds icy blues, teals, mint, warm gold/amber, and a few
+// hot accents so the background field reads as a varied stellar
+// population (O/B blue-white through K/M warm) rather than one hue.
 export const NORMAL_STAR_RGB = [
-    '#a6b3ff', '#c3a6ff', '#f3a6ff', '#ffa6f8',
-    '#ffa6c7', '#ff528e', '#d98cff', '#ff8c00',
+    // icy blue-white
+    '#cfe6ff', '#a6c8ff', '#8fb6ff', '#6fa8ff',
+    // cyan / teal
+    '#7ff0ff', '#5fe0d8', '#9ffff0',
+    // violet / lavender
+    '#c3a6ff', '#d98cff', '#b18cff',
+    // pink / magenta
+    '#f3a6ff', '#ffa6f8', '#ffa6c7', '#ff7fbf', '#ff528e',
+    // warm gold / amber / orange (cooler stars)
+    '#ffe3a6', '#ffd27f', '#ffb347', '#ff8c00',
+    // mint / pale green accent
+    '#c8ffcf', '#9bf6a0',
 ].map(hexToRgb);
 
 export const ASTEROID_WARM_RGB = [

@@ -19,10 +19,12 @@ import { Asteroid } from './entities/asteroid.js';
 import { Particle } from './entities/particle.js';
 import { LineDebris } from './entities/line-debris.js';
 import { Star } from './entities/star.js';
+import { MoneyPiece } from './entities/money-piece.js';
 
 import { handleCollisions } from './world/collisions.js';
 import { createAttractor } from './world/attractor.js';
 import { createSpawner } from './world/spawner.js';
+import { createNebula } from './world/nebula.js';
 
 import { setupTitleScreen, hideTitleScreen, playTitleLaunchAnimation } from './ui/title-screen.js';
 import { showMessage, hideMessage } from './ui/messages.js';
@@ -44,6 +46,7 @@ let renderer = null;
 let ui = null;
 let fpsOverlay = null;
 let bloomDebug = null;
+let nebula = null;
 
 function syncCanvasSize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -84,7 +87,8 @@ function buildPools() {
         particles:  new PoolManager(Particle, 400),
         lineDebris: new PoolManager(LineDebris, 150),
         asteroids:  new PoolManager(Asteroid, 20),
-        stars:      new PoolManager(Star, STAR_COUNT + 100),
+        stars:      new PoolManager(Star, STAR_COUNT),
+        money:      new PoolManager(MoneyPiece, 128),
     };
 }
 
@@ -111,7 +115,7 @@ function spawnStar() {
         attempts++;
         if (attempts > 100) break;
     } while (tooClose);
-    if (!tooClose) stars.get(x, y, false);
+    if (!tooClose) stars.get(x, y);
 }
 
 function checkHighScore() {
@@ -252,12 +256,13 @@ function update() {
     game.pools.particles.updateActive(game.pools.particles);
     game.pools.lineDebris.updateActive(game.pools.lineDebris);
     game.pools.asteroids.updateActive();
-    game.pools.stars.activeObjects.forEach(s =>
-        s.update(game.player.vel, game.player, game.pools.stars),
-    );
+    // Background stars: parallax only (no player arg — they're inert).
+    game.pools.stars.activeObjects.forEach(s => s.update(game.player.vel));
+    // Money pieces: parallax + magnet toward the ship.
+    game.pools.money.activeObjects.forEach(m => m.update(game.player.vel, game.player));
 
     const { playerDied } = handleCollisions(
-        game, game.pools, audioManager, haptic, triggerScreenShake, spawnStar,
+        game, game.pools, audioManager, haptic, triggerScreenShake,
     );
     if (playerDied) playerDie();
 
@@ -266,6 +271,9 @@ function update() {
 }
 
 function draw() {
+    // Nebula clouds sit behind everything (drawn first, after the veil),
+    // in both the title attractor and gameplay.
+    if (nebula) nebula.draw(renderer);
     if (game.state === 'TITLE_SCREEN') {
         attractor.draw(renderer);
     } else {
@@ -273,6 +281,7 @@ function draw() {
         game.pools.lineDebris.drawActive(renderer);
         game.pools.particles.drawActive(renderer);
         game.pools.asteroids.drawActive(renderer);
+        game.pools.money.drawActive(renderer);
         game.pools.bullets.drawActive(renderer);
         game.player.draw(renderer);
     }
@@ -283,11 +292,14 @@ function gameLoop() {
 
     if (game.state === 'TITLE_SCREEN') {
         attractor.tick();
+        if (nebula) nebula.tick();
     } else if (game.state === 'PLAYING') {
         update();
+        if (nebula) nebula.tick(game.player.vel.x, game.player.vel.y);
     } else if (game.state === 'GAME_OVER' || game.state === 'PAUSED') {
         game.pools.particles.updateActive(game.pools.particles);
         game.pools.lineDebris.updateActive(game.pools.lineDebris);
+        if (nebula) nebula.tick();
     }
 
     let shakeX = 0, shakeY = 0;
@@ -325,6 +337,7 @@ function gameLoop() {
         fpsOverlay.tick(performance.now());
         if (game.pools) {
             fpsOverlay.setInstanceCount('stars',      game.pools.stars.activeObjects.length);
+            fpsOverlay.setInstanceCount('money',      game.pools.money.activeObjects.length);
             fpsOverlay.setInstanceCount('particles',  game.pools.particles.activeObjects.length);
             fpsOverlay.setInstanceCount('bullets',    game.pools.bullets.activeObjects.length);
             fpsOverlay.setInstanceCount('lineDebris', game.pools.lineDebris.activeObjects.length);
@@ -368,6 +381,11 @@ async function boot() {
     renderer = await createRenderer(canvas);
     ui = createUIOverlay(canvas);
     syncCanvasSize();
+
+    // Nebula clouds — baked once, textures uploaded to the active
+    // renderer. Created after the renderer so registerTexture can run.
+    nebula = createNebula();
+    nebula.register(renderer);
 
     // Diagnostic overlays — invisible until SHIFT+F / SHIFT+B.
     fpsOverlay = new FPSOverlay();

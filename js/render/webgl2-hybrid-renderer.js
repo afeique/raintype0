@@ -108,4 +108,13 @@ export class WebGL2HybridRenderer extends Renderer {
     drawRadialFlash(cx, cy, radius, iR, iG, iB, iA, mR, mG, mB, mA, oR, oG, oB, oA) {
         this._current.drawRadialFlash(cx, cy, radius, iR, iG, iB, iA, mR, mG, mB, mA, oR, oG, oB, oA);
     }
+
+    // Nebula clouds are background — always render on the WebGL2 bulk
+    // layer (beneath the canvas2d overlay), regardless of setLayer state.
+    registerTexture(id, source) {
+        this.bulk.registerTexture(id, source);
+    }
+    drawSprite(id, cx, cy, width, height, rotation, alpha) {
+        this.bulk.drawSprite(id, cx, cy, width, height, rotation, alpha);
+    }
 }

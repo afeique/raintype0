@@ -2,7 +2,7 @@
 //   • player ↔ asteroid → game over
 //   • bullet ↔ asteroid → hit (split or destroy)
 //   • asteroid ↔ asteroid → elastic + rocky-debris spray
-//   • player ↔ star → pickup
+//   • player ↔ money piece → pickup (background stars are inert)
 //
 // O(n²) over very small N — fine at the monosrc scale (~25 asteroids,
 // ~3 bullets, ~150 stars). A spatial grid would not change the frame
@@ -10,7 +10,7 @@
 
 import {
     collision, random,
-    HIT_SCORE, DESTROY_SCORE, STAR_SCORE, BURST_STAR_SCORE,
+    HIT_SCORE, DESTROY_SCORE,
     MIN_AST_RAD,
 } from '../core/utils.js';
 
@@ -85,13 +85,17 @@ export function createAsteroidDestroyEffect(ast, pools) {
     }
 }
 
-export function createStarBurst(x, y, pools) {
-    for (let i = 0; i < 20; i++) pools.stars.get(x, y, true);
+// Scatter collectible money pieces from a destroyed asteroid. Each piece
+// rolls its own denomination (green / pink / gold) in MoneyPiece.reset.
+// A small handful per asteroid — 20 was a confetti storm.
+export function createMoneyBurst(x, y, pools) {
+    const count = 2 + ((Math.random() * 3) | 0); // 2–4 pieces
+    for (let i = 0; i < count; i++) pools.money.get(x, y);
 }
 
 // Returns mutated `state` (in particular game.score). Returns
 // { playerDied: boolean } so the caller can sequence game-over flow.
-export function handleCollisions(state, pools, audio, haptic, shake, onStarSpawn) {
+export function handleCollisions(state, pools, audio, haptic, shake) {
     let playerDied = false;
 
     // ── player ↔ asteroid ─────────────────────────────────────────────
@@ -124,7 +128,7 @@ export function handleCollisions(state, pools, audio, haptic, shake, onStarSpawn
                 state.score += DESTROY_SCORE;
                 audio.play('explosion');
                 createAsteroidDestroyEffect(ast, pools);
-                createStarBurst(ast.x, ast.y, pools);
+                createMoneyBurst(ast.x, ast.y, pools);
                 pools.asteroids.release(ast);
                 shake(15, 8);
             } else {
@@ -139,7 +143,7 @@ export function handleCollisions(state, pools, audio, haptic, shake, onStarSpawn
                     state.score += DESTROY_SCORE;
                     audio.play('explosion');
                     createAsteroidDestroyEffect(ast, pools);
-                    createStarBurst(ast.x, ast.y, pools);
+                    createMoneyBurst(ast.x, ast.y, pools);
                     shake(15, 8);
                 } else {
                     for (let k = 0; k < count; k++) {
@@ -165,16 +169,19 @@ export function handleCollisions(state, pools, audio, haptic, shake, onStarSpawn
     // ── asteroid ↔ asteroid ────────────────────────────────────────────
     resolveAsteroidCollisions(pools.asteroids.activeObjects, pools.particles);
 
-    // ── player ↔ stars (pickup) ───────────────────────────────────────
+    // ── player ↔ money pieces (pickup) ────────────────────────────────
+    // Only money pieces are collectible; their score depends on the
+    // denomination (green / pink / gold). Background stars live in a
+    // separate pool, are never iterated here, and so can never be picked
+    // up — they're purely decorative.
     if (state.player.active) {
-        for (let i = pools.stars.activeObjects.length - 1; i >= 0; i--) {
-            const star = pools.stars.activeObjects[i];
-            if (!collision(state.player, star)) continue;
-            state.score += star.isBurst ? BURST_STAR_SCORE : STAR_SCORE;
+        for (let i = pools.money.activeObjects.length - 1; i >= 0; i--) {
+            const piece = pools.money.activeObjects[i];
+            if (!collision(state.player, piece)) continue;
+            state.score += piece.score;
             audio.play('coin');
-            pools.particles.get(star.x, star.y, 'pickupPulse');
-            if (!star.isBurst) onStarSpawn();
-            pools.stars.release(star);
+            pools.particles.get(piece.x, piece.y, 'pickupPulse');
+            pools.money.release(piece);
         }
     }
 

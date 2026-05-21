@@ -58,7 +58,7 @@ export const SOUND_DEFS = {
         ],
     },
 
-    // Star / burst-star pickup. Bright ascending blip.
+    // Money-piece pickup. Bright ascending blip.
     coin: { preset: 'pickupCoin' },
 
     // Asteroid fully destroyed — wide noisy boom.

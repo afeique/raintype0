@@ -30,6 +30,7 @@ export class Canvas2DRenderer extends Renderer {
         this.blend = BLEND_NORMAL;
         this._shakeX = 0;
         this._shakeY = 0;
+        this._textures = new Map();
     }
 
     async init() {
@@ -155,5 +156,23 @@ export class Canvas2DRenderer extends Renderer {
         c.beginPath();
         c.arc(cx, cy, radius, 0, 2 * Math.PI);
         c.fill();
+    }
+
+    registerTexture(id, source) {
+        this._textures.set(id, source);
+    }
+
+    drawSprite(id, cx, cy, width, height, rotation, alpha) {
+        const tex = this._textures.get(id);
+        if (!tex || alpha <= 0) return;
+        const c = this.ctx;
+        c.save();
+        c.globalAlpha = alpha;
+        c.translate(cx, cy);
+        if (rotation) c.rotate(rotation);
+        c.drawImage(tex, -width / 2, -height / 2, width, height);
+        c.restore();
+        // globalAlpha is reset by restore(); blend mode is restored by
+        // the outer frame's composite state.
     }
 }

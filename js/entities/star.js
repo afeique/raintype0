@@ -1,21 +1,23 @@
-// Background stars. Two flavours:
-//   • Normal — shaped (point/diamond/star4/star8/plus), twinkles by
-//     sinusoidal opacity, drifts toward the ship within 150px.
-//   • Burst — gold-bordered green stars flung from a destroyed
-//     asteroid. Wider attraction radius (350px) and a hard life
-//     timer (300 frames).
+// Background stars — purely decorative. They twinkle (sinusoidal
+// opacity) and parallax-drift relative to the ship, then toroidally
+// wrap. They are NOT attracted to the player and CANNOT be collected;
+// the collectible currency is a separate entity (see money-piece.js).
+//
+// Visual variety comes from a broad colour palette (NORMAL_STAR_RGB)
+// and a weighted spread of shapes — points dominate, with the occasional
+// diamond / star / ring / hexagram sprinkled in.
 
-import {
-    STAR_ATTR, STAR_ATTRACT_DIST, STAR_FRIC,
-    BURST_STAR_ATTRACT_DIST, BURST_STAR_ATTR,
-    random, wrap, Viewport,
-} from '../core/utils.js';
-import {
-    NORMAL_STAR_RGB,
-    PALETTE,
-} from '../render/color-util.js';
+import { random, wrap, Viewport } from '../core/utils.js';
+import { NORMAL_STAR_RGB } from '../render/color-util.js';
 
-const SHAPES = ['point', 'point', 'point', 'point', 'point', 'point', 'point', 'diamond', 'star4', 'star8', 'plus'];
+// Shape weighting — points dominate (the field is mostly tiny pixels)
+// but a richer spread of decorative shapes is sprinkled through for
+// variety. Each non-'point' entry is comparatively rare.
+const SHAPES = [
+    'point', 'point', 'point', 'point', 'point', 'point', 'point', 'point',
+    'diamond', 'star4', 'star5', 'star8', 'plus', 'cross',
+    'triangle', 'hexagram', 'ring',
+];
 
 export class Star {
     constructor() {
@@ -25,7 +27,7 @@ export class Star {
         this.borderColor = new Float32Array(3);
     }
 
-    reset(x, y, burst = false) {
+    reset(x, y) {
         this.x = x ?? random(0, Viewport.width);
         this.y = y ?? random(0, Viewport.height);
 
@@ -42,63 +44,24 @@ export class Star {
         this.points = ((random(4, 7)) | 0) * 2;
         this.innerRadiusRatio = random(0.4, 0.8);
 
-        this.isBurst = burst;
-        this.vel = { x: 0, y: 0 };
-        this.active = true;
+        // Independent fill + border colours from the wide palette so the
+        // field reads as a varied stellar population rather than one hue.
+        this.color.set(NORMAL_STAR_RGB[(Math.random() * NORMAL_STAR_RGB.length) | 0]);
+        this.borderColor.set(NORMAL_STAR_RGB[(Math.random() * NORMAL_STAR_RGB.length) | 0]);
 
-        if (burst) {
-            const ang = random(0, 2 * Math.PI);
-            const spd = random(2, 5);
-            this.vel = { x: Math.cos(ang) * spd, y: Math.sin(ang) * spd };
-            this.color.set(PALETTE.burstGreen);
-            this.borderColor.set(PALETTE.gold);
-            // Persist indefinitely — the player picks them up by flying
-            // over them. WebGL2 batches all stars in one instanced draw
-            // so the additional draw cost is negligible, and the world
-            // gets a richer "scatter & scoop" feel.
-            this.life = -1;
-        } else {
-            this.color.set(NORMAL_STAR_RGB[(Math.random() * NORMAL_STAR_RGB.length) | 0]);
-            this.borderColor.set(NORMAL_STAR_RGB[(Math.random() * NORMAL_STAR_RGB.length) | 0]);
-            this.life = -1;
-        }
+        this.active = true;
     }
 
-    update(shipVel, player, pool) {
+    update(shipVel) {
         if (!this.active) return;
 
-        if (this.isBurst) {
-            // Burst stars persist indefinitely (life = -1). They drift,
-            // friction-decelerate to a slow float, twinkle softly, and
-            // get magnet-pulled toward the player at a wide radius —
-            // same model as normal stars but punchier.
-            this.vel.x *= STAR_FRIC;
-            this.vel.y *= STAR_FRIC;
-            this.x += this.vel.x;
-            this.y += this.vel.y;
-            this.opacityOffset += this.twinkleSpeed * 0.5;
-            this.opacity = (Math.sin(this.opacityOffset) + 1) / 2 * 0.4 + 0.6;
+        // Decorative only: twinkle in place, then parallax-drift with the
+        // ship. No attraction toward the player — that belongs to money
+        // pieces alone.
+        this.opacityOffset += this.twinkleSpeed;
+        this.opacity = (Math.sin(this.opacityOffset) + 1) / 2 * 0.9 + 0.1;
 
-            const dx = player.x - this.x;
-            const dy = player.y - this.y;
-            const dist = Math.hypot(dx, dy);
-            if (player.active && dist < BURST_STAR_ATTRACT_DIST) {
-                this.x += (dx / dist) * BURST_STAR_ATTR * this.z;
-                this.y += (dy / dist) * BURST_STAR_ATTR * this.z;
-            }
-        } else {
-            const dx = player.x - this.x;
-            const dy = player.y - this.y;
-            const dist = Math.hypot(dx, dy);
-            if (player.active && dist < STAR_ATTRACT_DIST) {
-                this.x += (dx / dist) * STAR_ATTR * this.z;
-                this.y += (dy / dist) * STAR_ATTR * this.z;
-            }
-            this.opacityOffset += this.twinkleSpeed;
-            this.opacity = (Math.sin(this.opacityOffset) + 1) / 2 * 0.9 + 0.1;
-        }
-
-        // Parallax: deeper stars (lower z) drift more relative to ship.
+        // Parallax: shallower stars (higher z) drift more relative to ship.
         this.x -= shipVel.x / (6 - this.z);
         this.y -= shipVel.y / (6 - this.z);
         wrap(this, Viewport);
@@ -161,6 +124,20 @@ export class Star {
                 this._strokeClosed(r, x, y, p, cr, cg, cb, a, colorLineWidth);
                 break;
             }
+            case 'star5': {
+                // 5-point star (alternating outer/inner radius).
+                const r0 = this.radius;
+                const r1 = r0 * 0.45;
+                const p = [];
+                for (let i = 0; i < 10; i++) {
+                    const ang = -Math.PI / 2 + i * Math.PI / 5;
+                    const rad = i % 2 === 0 ? r0 : r1;
+                    p.push(Math.cos(ang) * rad, Math.sin(ang) * rad);
+                }
+                this._strokeClosed(r, x, y, p, br, bg, bb, a, 1);
+                this._strokeClosed(r, x, y, p, cr, cg, cb, a, colorLineWidth);
+                break;
+            }
             case 'star8': {
                 const r0 = this.radius;
                 const r1 = this.innerRadiusRatio;
@@ -175,8 +152,42 @@ export class Star {
                 this._strokeClosed(r, x, y, p, cr, cg, cb, a, colorLineWidth);
                 break;
             }
+            case 'triangle': {
+                const r0 = this.radius;
+                const p = [];
+                for (let i = 0; i < 3; i++) {
+                    const ang = -Math.PI / 2 + i * (2 * Math.PI / 3);
+                    p.push(Math.cos(ang) * r0, Math.sin(ang) * r0);
+                }
+                this._strokeClosed(r, x, y, p, br, bg, bb, a, 1);
+                this._strokeClosed(r, x, y, p, cr, cg, cb, a, colorLineWidth);
+                break;
+            }
+            case 'hexagram': {
+                // Two overlapping triangles (Star of David). Draw each as
+                // its own closed loop so the SDF lines render crisply.
+                const r0 = this.radius;
+                const triA = [], triB = [];
+                for (let i = 0; i < 3; i++) {
+                    const aAng = -Math.PI / 2 + i * (2 * Math.PI / 3);
+                    const bAng =  Math.PI / 2 + i * (2 * Math.PI / 3);
+                    triA.push(Math.cos(aAng) * r0, Math.sin(aAng) * r0);
+                    triB.push(Math.cos(bAng) * r0, Math.sin(bAng) * r0);
+                }
+                this._strokeClosed(r, x, y, triA, br, bg, bb, a, 1);
+                this._strokeClosed(r, x, y, triB, br, bg, bb, a, 1);
+                this._strokeClosed(r, x, y, triA, cr, cg, cb, a, colorLineWidth);
+                this._strokeClosed(r, x, y, triB, cr, cg, cb, a, colorLineWidth);
+                break;
+            }
+            case 'ring': {
+                const r0 = this.radius;
+                r.strokeRing(x, y, r0, 1, br, bg, bb, a);
+                r.strokeRing(x, y, r0, colorLineWidth, cr, cg, cb, a);
+                break;
+            }
             default: {
-                // Crossed lines (X) — same as the canvas2d fallback.
+                // Crossed lines (X) — 'cross' shape + fallback.
                 const r0 = this.radius;
                 r.drawLine(x - r0, y - r0, x + r0, y + r0, 1, br, bg, bb, a);
                 r.drawLine(x + r0, y - r0, x - r0, y + r0, 1, br, bg, bb, a);

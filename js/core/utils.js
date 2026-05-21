@@ -17,28 +17,24 @@ export const SAFE_ZONE = 250;
 
 export const STAR_COUNT = 150;
 export const MIN_STAR_DIST = 30;
-// Normal stars: per-frame pull multiplied by star depth (z = 0.5..4.5).
-// Original mono used 0.05/150 — too weak to actually scoop nearby
-// stars before they drifted out of range. 0.12 + 320 px is firm
-// enough that a star already inside the radius accelerates toward
-// the player faster than it can wrap-drift away, but still well
-// below the burst-star numbers so the green orbs feel distinctly
-// stronger.
-export const STAR_ATTR = 0.12;
-export const STAR_ATTRACT_DIST = 320;
+
+// Background stars are purely decorative: they twinkle and parallax-drift,
+// but are NOT attracted to the ship and cannot be collected. (Before the
+// split they shared a magnet with the collectibles — that conflation is
+// gone; the only attracted/collectible thing is a MoneyPiece.) STAR_FRIC
+// is the shared float-decay friction, also used by money pieces.
 export const STAR_FRIC = 0.98;
-export const BURST_STAR_ATTRACT_DIST = 350;
-export const BURST_STAR_ATTR = 0.3;
+
+// Money pieces — the collectible currency that destroyed asteroids drop —
+// are the ONLY entities the ship attracts. MONEY_ATTR is a flat per-frame
+// pull (px) once a piece is within MONEY_ATTRACT_DIST: firm enough to
+// scoop, gentle enough not to teleport. Per-denomination colour + score
+// live in entities/money-piece.js.
+export const MONEY_ATTRACT_DIST = 350;
+export const MONEY_ATTR = 1.1;
 
 export const HIT_SCORE = 10;
 export const DESTROY_SCORE = 500;
-export const STAR_SCORE = 4;
-export const BURST_STAR_SCORE = 7;
-
-export const NORMAL_STAR_COLORS = [
-    '#a6b3ff', '#c3a6ff', '#f3a6ff', '#ffa6f8',
-    '#ffa6c7', '#ff528e', '#d98cff', '#ff8c00',
-];
 
 export const random = (a, b) => Math.random() * (b - a) + a;
 

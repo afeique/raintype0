@@ -27,16 +27,11 @@ export function createAttractor() {
         asteroids: new PoolManager(Asteroid, ATTRACTOR_ASTEROIDS),
     };
 
-    // Synthetic "camera" — a virtual position drifting in a slow
-    // looping orbit. Its velocity feeds the star parallax so the
-    // background quietly pans.
-    const cam = {
-        x: Viewport.width / 2,
-        y: Viewport.height / 2,
-        vel: { x: 0, y: 0 },
-        active: true, // satisfies star.update's player.active check
-        radius: 10,   // unused for stars but read by collision util
-    };
+    // Synthetic "camera" — only its velocity matters: it feeds the star
+    // parallax so the background quietly pans. (Stars no longer attract to
+    // or collide with anything, so the old active/radius/position fields
+    // are gone.)
+    const cam = { vel: { x: 0, y: 0 } };
 
     // The attractor wraps both `update` and `draw` into one frame call
     // since title-screen update + draw share the same trivial loop.
@@ -56,7 +51,7 @@ export function createAttractor() {
                 attempts++;
                 if (attempts > 100) break;
             } while (tooClose);
-            if (!tooClose) pools.stars.get(x, y, false);
+            if (!tooClose) pools.stars.get(x, y);
         }
     }
 
@@ -114,7 +109,7 @@ export function createAttractor() {
         // No particle pool here — physics only, no rocky-debris spawn.
         resolveAsteroidCollisions(pools.asteroids.activeObjects, null);
         for (const s of pools.stars.activeObjects) {
-            s.update(cam.vel, cam, pools.stars);
+            s.update(cam.vel);
         }
     }
 
