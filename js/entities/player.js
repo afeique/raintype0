@@ -6,6 +6,7 @@
 
 import {
     SHIP_SIZE, SHIP_THRUST, SHIP_FRICTION, MAX_V, TURN_SPEED,
+    DASH_SPEED, DASH_DURATION, DASH_INVULN, DASH_COOLDOWN, DASH_DECAY,
     random, wrap, Viewport,
 } from '../core/utils.js';
 import { findNearestAsteroid } from '../world/aim-assist.js';
@@ -33,11 +34,39 @@ export class Player {
         this.active = true;
         this.isThrusting = false;
         this._lastFireAt = 0;
+        // Dash state (all counted in fixed logic steps).
+        this.dashActive = 0;
+        this.invuln = 0;
+        this.dashCooldown = 0;
     }
 
     update(ctx, deps) {
         if (!this.active) return;
         const { input, pools, audio, haptic, mobile, mobileInput } = deps;
+
+        // Tick dash timers once per fixed step.
+        if (this.dashCooldown > 0) this.dashCooldown--;
+        if (this.dashActive   > 0) this.dashActive--;
+        if (this.invuln       > 0) this.invuln--;
+
+        // Edge-triggered dash request (consumed each step).
+        const dashReq = mobile ? (mobileInput && mobileInput.dash) : (input && input.dash);
+        if (input) input.dash = false;
+        if (dashReq && this.dashActive <= 0 && this.dashCooldown <= 0) {
+            this._startDash(pools, audio, haptic, mobile, mobileInput);
+        }
+
+        if (this.dashActive > 0) {
+            // Committed dash: coast on the (decaying) burst velocity, leave
+            // an after-image, ignore steering / thrust / fire, no speed cap.
+            this._spawnDashTrail(pools);
+            this.vel.x *= DASH_DECAY;
+            this.vel.y *= DASH_DECAY;
+            this.x += this.vel.x;
+            this.y += this.vel.y;
+            wrap(this, Viewport);
+            return;
+        }
 
         if (mobile && mobileInput) {
             this._updateMobile(mobileInput, pools, audio, haptic);
@@ -54,6 +83,34 @@ export class Player {
         this.x += this.vel.x;
         this.y += this.vel.y;
         wrap(this, Viewport);
+    }
+
+    // Kick off a dash. Direction: desktop = ship heading; mobile = stick
+    // direction if the player is actively pushing (a dodge, not into the
+    // auto-aim target), else carry current momentum, else heading.
+    _startDash(pools, audio, haptic, mobile, mobileInput) {
+        let dir = this.angle;
+        if (mobile) {
+            const move = mobileInput && mobileInput.move;
+            if (move && move.active && move.magnitude > 0.15) {
+                dir = Math.atan2(move.y, move.x);
+            } else if (Math.hypot(this.vel.x, this.vel.y) > 0.5) {
+                dir = Math.atan2(this.vel.y, this.vel.x);
+            }
+        }
+        this.dashActive = DASH_DURATION;
+        this.invuln = DASH_INVULN;
+        this.dashCooldown = DASH_COOLDOWN;
+        this.vel.x = Math.cos(dir) * DASH_SPEED;
+        this.vel.y = Math.sin(dir) * DASH_SPEED;
+        audio.play('thruster');
+        haptic(30);
+        this._spawnDashTrail(pools);
+    }
+
+    // Cyan after-image — reuse the phantom particle (hue 180 = cyan).
+    _spawnDashTrail(pools) {
+        pools.particles.get(this.x, this.y, 'phantom', 180, this.radius * 1.3);
     }
 
     // ── Desktop input (preserved from monosrc) ─────────────────────────
@@ -154,6 +211,16 @@ export class Player {
     draw(r) {
         if (!this.active) return;
         r.setLayer('overlay');
+
+        // i-frame tell — a pulsing additive cyan shield ring while
+        // dashing/invulnerable, so the player reads "I can't be hit now".
+        if (this.invuln > 0) {
+            r.setBlend(BLEND_ADDITIVE);
+            const pulse = 0.35 + 0.3 * Math.sin(this.invuln * 0.5);
+            r.strokeRing(this.x, this.y, this.radius * 1.9, 2, 0, 1, 1, pulse);
+            r.setBlend(BLEND_NORMAL);
+        }
+
         // Ship draws as two triangles (rotated by angle + π/2). Compute
         // world-space vertices and emit each edge through drawGlowLine
         // so the renderer can synthesise the cyan halo.

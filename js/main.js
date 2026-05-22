@@ -30,6 +30,9 @@ import { setupTitleScreen, hideTitleScreen, playTitleLaunchAnimation } from './u
 import { showMessage, hideMessage } from './ui/messages.js';
 import { setupPauseMenu } from './ui/pause.js';
 import { setupMobileControls } from './ui/mobile-controls.js';
+import { createFloaters } from './ui/floaters.js';
+
+import { COMBO_WINDOW_MS, COMBO_MAX, DASH_COOLDOWN } from './core/utils.js';
 
 import { createRenderer } from './render/select.js';
 import { createUIOverlay } from './render/ui-overlay.js';
@@ -69,10 +72,15 @@ const game = {
     spawner: null,
     screenShakeDuration: 0,
     screenShakeMagnitude: 0,
+    // Kill-combo + impact freeze (set by collisions, consumed by the loop).
+    combo: 0,
+    comboTimerMs: 0,
+    hitstopMs: 0,
 };
 
 const input = {
     up: false, down: false, space: false, rotation: 0,
+    dash: false, _dashHeld: false,
     gameState: () => game.state,
 };
 
@@ -80,6 +88,25 @@ const music = new MusicPlayer();
 const MOBILE = isMobile();
 
 const attractor = createAttractor();
+
+// Rising score / combo text on the HUD overlay, fed by gameplay events.
+const floaters = createFloaters();
+bus.on('score:popup', ({ x, y, amount, mult }) => {
+    const text = mult > 1 ? `+${amount}  x${mult}` : `+${amount}`;
+    floaters.spawn(x, y, text, comboColor(mult), mult >= 3);
+});
+bus.on('money:popup', ({ x, y, amount }) => {
+    floaters.spawn(x, y, `+${amount}`, '#ffd700', false);
+});
+
+// Combo multiplier → colour ramp: white → gold → orange → hot red.
+function comboColor(mult) {
+    if (mult >= 7) return '#ff3030';
+    if (mult >= 5) return '#ff8c00';
+    if (mult >= 3) return '#ffd700';
+    if (mult >= 2) return '#aef0ff';
+    return '#ffffff';
+}
 
 function buildPools() {
     game.pools = {
@@ -127,6 +154,10 @@ function checkHighScore() {
 
 function init() {
     game.score = 0;
+    game.combo = 0;
+    game.comboTimerMs = 0;
+    game.hitstopMs = 0;
+    floaters.clear();
     buildPools();
     game.player = new Player();
     game.spawner = createSpawner({ pools: game.pools });
@@ -209,6 +240,13 @@ document.addEventListener('keydown', e => {
         case 'ArrowLeft':  input.rotation = -1; break;
         case 'ArrowRight': input.rotation = 1; break;
         case 'Space':      input.space = true; break;
+        // Dash on Shift — edge-triggered (keydown auto-repeats while held,
+        // so guard with _dashHeld for one dash per press; cooldown does
+        // the rest).
+        case 'ShiftLeft':
+        case 'ShiftRight':
+            if (!input._dashHeld) { input._dashHeld = true; input.dash = true; }
+            break;
     }
 });
 
@@ -219,6 +257,8 @@ document.addEventListener('keyup', e => {
         case 'ArrowLeft':  if (input.rotation < 0) input.rotation = 0; break;
         case 'ArrowRight': if (input.rotation > 0) input.rotation = 0; break;
         case 'Space':      input.space = false; break;
+        case 'ShiftLeft':
+        case 'ShiftRight': input._dashHeld = false; break;
     }
 });
 
@@ -287,27 +327,74 @@ function draw() {
     }
 }
 
-function gameLoop() {
-    frameClock.advance();
+// ── Fixed-timestep loop ────────────────────────────────────────────────
+// Logic runs in fixed 1/60 s steps so the simulation speed is identical
+// on a 60, 120 or 144 Hz display (previously entities integrated once
+// per RAF, so high-refresh monitors ran the game 2–2.4× too fast).
+// Rendering happens once per RAF; the accumulator catches logic up.
 
+const STEP_MS = 1000 / 60;
+const MAX_STEPS = 5;            // spiral-of-death guard (tab refocus, hitches)
+let _accumulator = 0;
+let _lastTime = performance.now();
+
+// One fixed logic step. All per-step game state advances here.
+function stepLogic() {
     if (game.state === 'TITLE_SCREEN') {
         attractor.tick();
         if (nebula) nebula.tick();
     } else if (game.state === 'PLAYING') {
         update();
         if (nebula) nebula.tick(game.player.vel.x, game.player.vel.y);
+        // Combo decays when no destroy renews the window.
+        if (game.comboTimerMs > 0) {
+            game.comboTimerMs -= STEP_MS;
+            if (game.comboTimerMs <= 0) game.combo = 0;
+        }
     } else if (game.state === 'GAME_OVER' || game.state === 'PAUSED') {
         game.pools.particles.updateActive(game.pools.particles);
         game.pools.lineDebris.updateActive(game.pools.lineDebris);
         if (nebula) nebula.tick();
     }
 
-    let shakeX = 0, shakeY = 0;
+    // Screen-shake countdown is now per logic step (time-consistent).
     if (game.screenShakeDuration > 0) {
-        shakeX = (Math.random() - 0.5) * game.screenShakeMagnitude;
-        shakeY = (Math.random() - 0.5) * game.screenShakeMagnitude;
         game.screenShakeDuration--;
         if (game.screenShakeDuration <= 0) game.screenShakeMagnitude = 0;
+    }
+
+    floaters.update();
+}
+
+function gameLoop() {
+    const now = performance.now();
+    let frameDt = now - _lastTime;
+    _lastTime = now;
+    if (frameDt > 250) frameDt = 250; // clamp huge gaps (background tab)
+
+    frameClock.advance(); // wall-clock for hue cycling + spawn cadence
+
+    if (game.hitstopMs > 0) {
+        // Impact freeze — hold the whole sim, keep rendering (the shake
+        // jitter below still plays, which sells the hit).
+        game.hitstopMs -= frameDt;
+    } else {
+        _accumulator += frameDt;
+        let steps = 0;
+        while (_accumulator >= STEP_MS && steps < MAX_STEPS) {
+            stepLogic();
+            _accumulator -= STEP_MS;
+            steps++;
+        }
+        if (steps === MAX_STEPS) _accumulator = 0; // drop backlog
+    }
+
+    // Screen-shake offset is sampled at render time from the live
+    // magnitude (the countdown lives in stepLogic).
+    let shakeX = 0, shakeY = 0;
+    if (game.screenShakeMagnitude > 0) {
+        shakeX = (Math.random() - 0.5) * game.screenShakeMagnitude;
+        shakeY = (Math.random() - 0.5) * game.screenShakeMagnitude;
     }
 
     // Live bloom tunables from the SHIFT+B debug overlay (no-op when
@@ -345,12 +432,65 @@ function gameLoop() {
         }
     }
 
-    // UI overlay (mobile sticks + FPS) — always rendered on canvas2d.
+    // UI overlay (mobile sticks + combo + score floaters + FPS) — canvas2d.
     ui.beginFrame();
     if (mobileCtrl && game.state !== 'TITLE_SCREEN') mobileCtrl.draw(ui.ctx);
+    if (game.state === 'PLAYING' || game.state === 'GAME_OVER') {
+        drawComboHud(ui.ctx);
+        floaters.draw(ui.ctx);
+    }
+    if (game.state === 'PLAYING') drawDashHud(ui.ctx);
     ui.endFrame(renderer.flag || 'canvas2d');
 
     requestAnimationFrame(gameLoop);
+}
+
+// Combo multiplier indicator, just under the score (top-left). Pulses
+// and brightens as the combo climbs; hidden below x2.
+function drawComboHud(ctx) {
+    const mult = Math.min(game.combo, COMBO_MAX);
+    if (mult < 2) return;
+    const frac = game.comboTimerMs / COMBO_WINDOW_MS; // 1 → 0 as it lapses
+    const pulse = 1 + 0.08 * Math.sin(performance.now() * 0.012);
+    ctx.save();
+    ctx.translate(24, 64);
+    ctx.scale(pulse, pulse);
+    ctx.font = '20px "Press Start 2P", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#000';
+    ctx.fillText(`x${mult}`, 2, 2);
+    ctx.fillStyle = comboColor(mult);
+    ctx.fillText(`x${mult}`, 0, 0);
+    // Decay bar — shrinks as the combo window lapses.
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(0, 16, 64, 3);
+    ctx.fillStyle = comboColor(mult);
+    ctx.fillRect(0, 16, 64 * Math.max(0, frac), 3);
+    ctx.restore();
+}
+
+// Dash cooldown readout (top-left, under the combo slot). Fills back to
+// full + brightens when the dash is ready again.
+function drawDashHud(ctx) {
+    if (!game.player) return;
+    const cd = game.player.dashCooldown || 0;
+    const fill = Math.min(1, 1 - cd / DASH_COOLDOWN);
+    const ready = cd <= 0;
+    const x = 24, y = 100, w = 64, h = 6;
+    ctx.save();
+    ctx.font = '8px "Press Start 2P", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#000';
+    ctx.fillText('DASH', x + 1, y - 3);
+    ctx.fillStyle = ready ? '#0ff' : 'rgba(120,170,190,0.85)';
+    ctx.fillText('DASH', x, y - 4);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = ready ? '#0ff' : 'rgba(0,200,220,0.7)';
+    ctx.fillRect(x, y, w * fill, h);
+    ctx.restore();
 }
 
 // ── Title-screen "any key" start ──────────────────────────────────────

@@ -10,6 +10,17 @@ export const MAX_V = 6;
 export const TURN_SPEED = 0.06;
 export const BULLET_SPEED = 8;
 
+// Dash / hyperspace — a committed burst with brief invulnerability.
+// Durations are in fixed logic steps (60 = 1 s) since the player
+// updates once per 1/60 s step. DASH_INVULN slightly outlasts the burst
+// so a dash *through* an asteroid is forgiving. DASH_DECAY eases the
+// burst velocity out so the ship doesn't snap to a halt.
+export const DASH_SPEED    = 16;   // burst speed (vs MAX_V = 6)
+export const DASH_DURATION = 11;   // ~0.18 s of committed burst
+export const DASH_INVULN   = 26;   // ~0.43 s of i-frames
+export const DASH_COOLDOWN = 75;   // ~1.25 s between dashes
+export const DASH_DECAY    = 0.90; // per-step velocity falloff during dash
+
 export const INITIAL_AST_COUNT = 3;
 export const AST_SPEED = 1.2;
 export const MIN_AST_RAD = 15;
@@ -35,6 +46,14 @@ export const MONEY_ATTR = 1.1;
 
 export const HIT_SCORE = 10;
 export const DESTROY_SCORE = 500;
+
+// Kill-combo: each asteroid destroyed within COMBO_WINDOW_MS of the last
+// bumps the multiplier (capped at COMBO_MAX), which scales DESTROY_SCORE.
+// The window resets on every destroy and decays to 0 when it lapses.
+export const COMBO_WINDOW_MS = 2500;
+export const COMBO_MAX = 8;
+// Frame-freeze on a destroy, in ms — Vlambeer-style impact punch.
+export const HITSTOP_MS = 70;
 
 export const random = (a, b) => Math.random() * (b - a) + a;
 

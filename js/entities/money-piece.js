@@ -13,17 +13,21 @@ import {
 } from '../core/utils.js';
 import { hexToRgb } from '../render/color-util.js';
 
-// fill, border (rim), score, spawn weight (relative). Tweak freely.
-const VARIANT = (fill, border, score, weight) => ({
+// fill, border (rim), score, base radius, spawn weight (relative).
+// Radius scales with value so bigger orbs visibly read as worth more;
+// reset() adds per-piece jitter on top for size variety within a tier.
+const VARIANT = (fill, border, score, radius, weight) => ({
     color: hexToRgb(fill),
     border: hexToRgb(border),
     score,
+    radius,
     weight,
 });
 const MONEY_VARIANTS = [
-    VARIANT('#00ff7f', '#0a5235', 5,  60),  // green — common
-    VARIANT('#ff5bc2', '#5e1440', 9,  30),  // pink  — uncommon
-    VARIANT('#ffd700', '#7a5600', 18, 10),  // gold  — rare, high value
+    VARIANT('#00ff7f', '#0a5235', 4,  2.0, 56),  // green — common, tiny
+    VARIANT('#ff5bc2', '#5e1440', 9,  2.9, 27),  // pink  — uncommon
+    VARIANT('#ffd700', '#7a5600', 16, 3.8, 12),  // gold  — rare, big
+    VARIANT('#5beaff', '#0a4a5e', 30, 4.8,  5),  // cyan  — rarest, biggest
 ];
 const MONEY_TOTAL_WEIGHT = MONEY_VARIANTS.reduce((s, v) => s + v.weight, 0);
 
@@ -57,9 +61,10 @@ export class MoneyPiece {
         this.color.set(v.color);
         this.borderColor.set(v.border);
         this.score = v.score;
-        // Readable, consistent pickup size (gold reads a touch larger so
-        // the rare piece pops) — distinct from the tiny background dust.
-        this.radius = v.score >= 18 ? 5.5 : 4.5;
+        // Per-piece jitter (±18%) on the variant's base radius so even
+        // same-value orbs vary in size. Bigger orb ⇒ higher tier ⇒ more
+        // points, so size reads as value at a glance.
+        this.radius = v.radius * random(0.82, 1.18);
 
         // Fixed mid-foreground parallax depth (collectibles sit "in" the
         // playfield, not deep in the backdrop).
@@ -108,6 +113,15 @@ export class MoneyPiece {
         const x = this.x, y = this.y, rad = this.radius;
         const cr = this.color[0], cg = this.color[1], cb = this.color[2];
         const br = this.borderColor[0], bg = this.borderColor[1], bb = this.borderColor[2];
+
+        // Additive glow halo — makes the coin read as a bright, magnetic
+        // collectible (and blooms on the WebGL/WebGPU paths), clearly
+        // distinct from the dim, non-glowing background dust. Drawn first
+        // so the crisp coin body sits on top.
+        r.setBlend('additive');
+        r.fillCircle(x, y, rad * 2.6, cr, cg, cb, a * 0.30);
+        r.fillCircle(x, y, rad * 1.5, cr, cg, cb, a * 0.30);
+        r.setBlend('normal');
 
         // Coin body, darker rim, bright centre highlight.
         r.fillCircle(x, y, rad, cr, cg, cb, a);

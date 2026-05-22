@@ -151,33 +151,36 @@ export function createNebula() {
         }
     }
 
-    // Advance animation + drift. A slow autonomous wander keeps the
-    // clouds moving even when the ship is still (and on the title
-    // screen), and the passed velocity adds gentle ship-motion parallax
-    // on top — clouds are far away, so they barely budge relative to it.
+    // STATIC for now — the drifting / rotating / pulsing nebula was too
+    // distracting during play. tick() is a no-op so the clouds hold
+    // position. To bring the motion back, uncomment the body below (and
+    // the dynamic branch in draw()).
     function tick(velX = 0, velY = 0) {
-        t += 1;
-        driftX += Math.cos(t * 0.0009) * 0.10 - velX * 0.15;
-        driftY += Math.sin(t * 0.0011) * 0.10 - velY * 0.15;
+        // t += 1;
+        // driftX += Math.cos(t * 0.0009) * 0.10 - velX * 0.15;
+        // driftY += Math.sin(t * 0.0011) * 0.10 - velY * 0.15;
     }
 
     function draw(renderer) {
         // Additive so the clouds glow and stack where they overlap, and
         // so the bloom pass picks them up. Drawn before the starfield.
         renderer.setBlend('additive');
-        const w = Viewport.width, h = Viewport.height;
+        // const w = Viewport.width, h = Viewport.height;
         for (const c of clouds) {
-            const pulse = 0.85 + 0.15 * Math.sin(t * c.pulseSpeed + c.pulsePhase);
-            const alpha = c.baseAlpha * pulse;
-            // Parallax position, wrapped over a generous margin so a
-            // cloud sliding off one edge reappears on the other.
-            const margin = c.size;
-            let px = (c.x + driftX * c.depth) % (w + margin * 2);
-            let py = (c.y + driftY * c.depth) % (h + margin * 2);
-            if (px < -margin) px += w + margin * 2;
-            if (py < -margin) py += h + margin * 2;
-            const rot = c.rotation + t * c.rotSpeed;
-            renderer.drawSprite(c.id, px, py, c.size, c.size, rot, alpha);
+            // ── Static render ──────────────────────────────────────────
+            renderer.drawSprite(c.id, c.x, c.y, c.size, c.size, c.rotation, c.baseAlpha);
+
+            // ── Dynamic version (pulse + parallax drift + rotation) ────
+            // Uncomment to re-enable motion (and the body of tick()):
+            // const pulse = 0.85 + 0.15 * Math.sin(t * c.pulseSpeed + c.pulsePhase);
+            // const alpha = c.baseAlpha * pulse;
+            // const margin = c.size;
+            // let px = (c.x + driftX * c.depth) % (w + margin * 2);
+            // let py = (c.y + driftY * c.depth) % (h + margin * 2);
+            // if (px < -margin) px += w + margin * 2;
+            // if (py < -margin) py += h + margin * 2;
+            // const rot = c.rotation + t * c.rotSpeed;
+            // renderer.drawSprite(c.id, px, py, c.size, c.size, rot, alpha);
         }
         renderer.setBlend('normal');
     }

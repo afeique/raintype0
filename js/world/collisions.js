@@ -11,8 +11,25 @@
 import {
     collision, random,
     HIT_SCORE, DESTROY_SCORE,
+    COMBO_WINDOW_MS, COMBO_MAX, HITSTOP_MS,
     MIN_AST_RAD,
 } from '../core/utils.js';
+import { bus } from '../core/event-bus.js';
+
+// Register one asteroid destroy: bump the kill-combo, award the
+// multiplied score, fire hitstop, and emit a popup. Mutates `state`
+// (game) in place. Returns the points gained so the caller can stay
+// readable.
+function registerDestroy(state, x, y) {
+    state.combo = (state.combo || 0) + 1;
+    state.comboTimerMs = COMBO_WINDOW_MS;
+    const mult = Math.min(state.combo, COMBO_MAX);
+    const gained = DESTROY_SCORE * mult;
+    state.score += gained;
+    state.hitstopMs = Math.max(state.hitstopMs || 0, HITSTOP_MS);
+    bus.emit('score:popup', { x, y, amount: gained, mult });
+    return gained;
+}
 
 // Pairwise elastic collision resolution between every asteroid in the
 // list. Velocity exchange ONLY when the pair is actively closing —
@@ -86,10 +103,10 @@ export function createAsteroidDestroyEffect(ast, pools) {
 }
 
 // Scatter collectible money pieces from a destroyed asteroid. Each piece
-// rolls its own denomination (green / pink / gold) in MoneyPiece.reset.
-// A small handful per asteroid — 20 was a confetti storm.
+// rolls its own denomination + size in MoneyPiece.reset. Just a few per
+// asteroid — value comes from the orb tier, not the count.
 export function createMoneyBurst(x, y, pools) {
-    const count = 2 + ((Math.random() * 3) | 0); // 2–4 pieces
+    const count = 1 + ((Math.random() * 3) | 0); // 1–3 pieces
     for (let i = 0; i < count; i++) pools.money.get(x, y);
 }
 
@@ -99,7 +116,8 @@ export function handleCollisions(state, pools, audio, haptic, shake) {
     let playerDied = false;
 
     // ── player ↔ asteroid ─────────────────────────────────────────────
-    if (state.player.active) {
+    // Dash i-frames (player.invuln > 0) let the ship pass through rocks.
+    if (state.player.active && state.player.invuln <= 0) {
         for (const ast of pools.asteroids.activeObjects) {
             if (collision(state.player, ast)) {
                 playerDied = true;
@@ -125,7 +143,7 @@ export function handleCollisions(state, pools, audio, haptic, shake) {
 
             const smallEnough = ast.baseRadius <= (MIN_AST_RAD + 5);
             if (smallEnough) {
-                state.score += DESTROY_SCORE;
+                registerDestroy(state, ast.x, ast.y);
                 audio.play('explosion');
                 createAsteroidDestroyEffect(ast, pools);
                 createMoneyBurst(ast.x, ast.y, pools);
@@ -140,7 +158,7 @@ export function handleCollisions(state, pools, audio, haptic, shake) {
                 const vCOMy = (ast.vel.y * ast.mass + bullet.vel.y * bullet.mass) / totalMass;
 
                 if (newR < MIN_AST_RAD) {
-                    state.score += DESTROY_SCORE;
+                    registerDestroy(state, ast.x, ast.y);
                     audio.play('explosion');
                     createAsteroidDestroyEffect(ast, pools);
                     createMoneyBurst(ast.x, ast.y, pools);
@@ -181,6 +199,7 @@ export function handleCollisions(state, pools, audio, haptic, shake) {
             state.score += piece.score;
             audio.play('coin');
             pools.particles.get(piece.x, piece.y, 'pickupPulse');
+            bus.emit('money:popup', { x: piece.x, y: piece.y, amount: piece.score });
             pools.money.release(piece);
         }
     }
