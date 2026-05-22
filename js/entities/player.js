@@ -1,4 +1,4 @@
-// Cyan twin-triangle ship. Supports two input modes:
+// Cyan swept-wing interceptor. Supports two input modes:
 //   • Desktop — keyboard: arrow-keys rotate + thrust, space fires.
 //   • Mobile  — single stick: drag-to-move (Sky Force / Galaxy Attack
 //     model). Ship auto-aims at the nearest asteroid and auto-fires
@@ -6,7 +6,6 @@
 
 import {
     SHIP_SIZE, SHIP_THRUST, SHIP_FRICTION, MAX_V, TURN_SPEED,
-    DASH_SPEED, DASH_DURATION, DASH_INVULN, DASH_COOLDOWN, DASH_DECAY,
     random, wrap, Viewport,
 } from '../core/utils.js';
 import { findNearestAsteroid } from '../world/aim-assist.js';
@@ -34,39 +33,11 @@ export class Player {
         this.active = true;
         this.isThrusting = false;
         this._lastFireAt = 0;
-        // Dash state (all counted in fixed logic steps).
-        this.dashActive = 0;
-        this.invuln = 0;
-        this.dashCooldown = 0;
     }
 
     update(ctx, deps) {
         if (!this.active) return;
         const { input, pools, audio, haptic, mobile, mobileInput } = deps;
-
-        // Tick dash timers once per fixed step.
-        if (this.dashCooldown > 0) this.dashCooldown--;
-        if (this.dashActive   > 0) this.dashActive--;
-        if (this.invuln       > 0) this.invuln--;
-
-        // Edge-triggered dash request (consumed each step).
-        const dashReq = mobile ? (mobileInput && mobileInput.dash) : (input && input.dash);
-        if (input) input.dash = false;
-        if (dashReq && this.dashActive <= 0 && this.dashCooldown <= 0) {
-            this._startDash(pools, audio, haptic, mobile, mobileInput);
-        }
-
-        if (this.dashActive > 0) {
-            // Committed dash: coast on the (decaying) burst velocity, leave
-            // an after-image, ignore steering / thrust / fire, no speed cap.
-            this._spawnDashTrail(pools);
-            this.vel.x *= DASH_DECAY;
-            this.vel.y *= DASH_DECAY;
-            this.x += this.vel.x;
-            this.y += this.vel.y;
-            wrap(this, Viewport);
-            return;
-        }
 
         if (mobile && mobileInput) {
             this._updateMobile(mobileInput, pools, audio, haptic);
@@ -83,34 +54,6 @@ export class Player {
         this.x += this.vel.x;
         this.y += this.vel.y;
         wrap(this, Viewport);
-    }
-
-    // Kick off a dash. Direction: desktop = ship heading; mobile = stick
-    // direction if the player is actively pushing (a dodge, not into the
-    // auto-aim target), else carry current momentum, else heading.
-    _startDash(pools, audio, haptic, mobile, mobileInput) {
-        let dir = this.angle;
-        if (mobile) {
-            const move = mobileInput && mobileInput.move;
-            if (move && move.active && move.magnitude > 0.15) {
-                dir = Math.atan2(move.y, move.x);
-            } else if (Math.hypot(this.vel.x, this.vel.y) > 0.5) {
-                dir = Math.atan2(this.vel.y, this.vel.x);
-            }
-        }
-        this.dashActive = DASH_DURATION;
-        this.invuln = DASH_INVULN;
-        this.dashCooldown = DASH_COOLDOWN;
-        this.vel.x = Math.cos(dir) * DASH_SPEED;
-        this.vel.y = Math.sin(dir) * DASH_SPEED;
-        audio.play('thruster');
-        haptic(30);
-        this._spawnDashTrail(pools);
-    }
-
-    // Cyan after-image — reuse the phantom particle (hue 180 = cyan).
-    _spawnDashTrail(pools) {
-        pools.particles.get(this.x, this.y, 'phantom', 180, this.radius * 1.3);
     }
 
     // ── Desktop input (preserved from monosrc) ─────────────────────────
@@ -212,50 +155,73 @@ export class Player {
         if (!this.active) return;
         r.setLayer('overlay');
 
-        // i-frame tell — a pulsing additive cyan shield ring while
-        // dashing/invulnerable, so the player reads "I can't be hit now".
-        if (this.invuln > 0) {
-            r.setBlend(BLEND_ADDITIVE);
-            const pulse = 0.35 + 0.3 * Math.sin(this.invuln * 0.5);
-            r.strokeRing(this.x, this.y, this.radius * 1.9, 2, 0, 1, 1, pulse);
-            r.setBlend(BLEND_NORMAL);
-        }
-
-        // Ship draws as two triangles (rotated by angle + π/2). Compute
-        // world-space vertices and emit each edge through drawGlowLine
-        // so the renderer can synthesise the cyan halo.
-        const x = this.x, y = this.y, R = this.radius, w = 1.15;
-        // Local-space vertices (before rotation).
-        const lx = [0, R * 0.96 * w, R * 0.6 * w, 0, -R * 0.96 * w, -R * 0.6 * w];
-        const ly = [-R, R * 0.9, R * 0.9, -R * 0.1, R * 0.9, R * 0.9];
-
-        // The original draws "rotate(angle + π/2)" then sketches with
-        // nose at (0, -R). Apply that same rotation here.
+        // Swept-wing interceptor (silhouette adapted from rainboids).
+        // The hull is one closed 10-point perimeter in local space (nose
+        // at (0, -R), +y down), rotated by angle + π/2 — same convention
+        // as the old twin-triangle. We split the perimeter into bright
+        // "leading" edges (nose + wing fronts) that carry the glow halo,
+        // and "trailing" edges drawn as crisp lines. The glow stroke is
+        // the costly primitive (canvas2d shadowBlur / WebGL bloom-boost),
+        // so reserving it for the 4 front edges — instead of stroking
+        // every edge with glow as before — keeps a richer hull cheaper
+        // than the old 8-glow-line ship.
+        //
+        //            N(0)
+        //           /    \
+        //   LW(8)--LS(9)  RS(1)--RW(2)
+        //      \    \      /    /
+        //     LB(7)  \    /   RB(3)
+        //        \   TC(5)   /
+        //       LE(6)      RE(4)
+        const x = this.x, y = this.y, R = this.radius;
+        const lx = [
+            0.00,  0.24,  1.16,  0.30,  0.42,
+            0.00, -0.42, -0.30, -1.16, -0.24,
+        ];
+        const ly = [
+           -1.00, -0.16,  0.50,  0.48,  0.92,
+            0.58,  0.92,  0.48,  0.50, -0.16,
+        ];
         const rot = this.angle + Math.PI / 2;
         const c = Math.cos(rot), s = Math.sin(rot);
-        const wx = new Array(6);
-        const wy = new Array(6);
-        for (let i = 0; i < 6; i++) {
-            wx[i] = x + lx[i] * c - ly[i] * s;
-            wy[i] = y + lx[i] * s + ly[i] * c;
+        const wx = new Array(10), wy = new Array(10);
+        for (let i = 0; i < 10; i++) {
+            const px = lx[i] * R, py = ly[i] * R;
+            wx[i] = x + px * c - py * s;
+            wy[i] = y + px * s + py * c;
         }
 
-        // Original used 'lighter' compositing — additive blend for both
-        // the line and its shadow halo. drawGlowLine emits the halo as
-        // an additive soft line beneath the crisp stroke.
         r.setBlend(BLEND_ADDITIVE);
-        const lw = 2;
-        const glowW = 15;
-        // Right triangle: 0 → 1 → 2 → 3 → 0
-        r.drawGlowLine(wx[0], wy[0], wx[1], wy[1], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
-        r.drawGlowLine(wx[1], wy[1], wx[2], wy[2], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
-        r.drawGlowLine(wx[2], wy[2], wx[3], wy[3], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
-        r.drawGlowLine(wx[3], wy[3], wx[0], wy[0], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
-        // Left triangle: 0 → 4 → 5 → 3 → 0
-        r.drawGlowLine(wx[0], wy[0], wx[4], wy[4], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
-        r.drawGlowLine(wx[4], wy[4], wx[5], wy[5], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
-        r.drawGlowLine(wx[5], wy[5], wx[3], wy[3], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
-        r.drawGlowLine(wx[3], wy[3], wx[0], wy[0], lw, 0, 1, 1, 1, glowW, 0, 1, 1, 1);
+
+        // Trailing / rear edges — crisp cyan, no halo (cheap; visually
+        // recedes so the glowing front edges read as the leading face).
+        const tw = 1.5, ta = 0.85;
+        r.drawLine(wx[2], wy[2], wx[3], wy[3], tw, 0, 0.85, 1, ta); // RW→RB
+        r.drawLine(wx[3], wy[3], wx[4], wy[4], tw, 0, 0.85, 1, ta); // RB→RE
+        r.drawLine(wx[4], wy[4], wx[5], wy[5], tw, 0, 0.85, 1, ta); // RE→TC
+        r.drawLine(wx[5], wy[5], wx[6], wy[6], tw, 0, 0.85, 1, ta); // TC→LE
+        r.drawLine(wx[6], wy[6], wx[7], wy[7], tw, 0, 0.85, 1, ta); // LE→LB
+        r.drawLine(wx[7], wy[7], wx[8], wy[8], tw, 0, 0.85, 1, ta); // LB→LW
+
+        // Leading edges — bright cyan with glow halo (signature look).
+        const lw = 2, gw = 12;
+        r.drawGlowLine(wx[0], wy[0], wx[1], wy[1], lw, 0, 1, 1, 1, gw, 0, 1, 1, 1); // N→RS
+        r.drawGlowLine(wx[1], wy[1], wx[2], wy[2], lw, 0, 1, 1, 1, gw, 0, 1, 1, 1); // RS→RW
+        r.drawGlowLine(wx[0], wy[0], wx[9], wy[9], lw, 0, 1, 1, 1, gw, 0, 1, 1, 1); // N→LS
+        r.drawGlowLine(wx[9], wy[9], wx[8], wy[8], lw, 0, 1, 1, 1, gw, 0, 1, 1, 1); // LS→LW
+
+        // Twin engine ports — warm exhaust (matches the orange thrust
+        // trail). Bright + larger while thrusting, faint ember at idle.
+        const er = R * (this.isThrusting ? 0.24 : 0.13);
+        const ea = this.isThrusting ? 1 : 0.4;
+        r.fillCircle(wx[4], wy[4], er, 1, 0.45, 0.05, ea); // right engine
+        r.fillCircle(wx[6], wy[6], er, 1, 0.45, 0.05, ea); // left engine
+
+        // Cockpit — bright white-cyan core just behind the nose.
+        const ckx = x - (-0.34 * R) * s;
+        const cky = y + (-0.34 * R) * c;
+        r.fillCircle(ckx, cky, R * 0.16, 0.7, 1, 1, 0.95);
+
         r.setBlend(BLEND_NORMAL);
         r.setLayer('bulk');
     }

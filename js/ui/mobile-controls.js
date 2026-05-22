@@ -11,14 +11,6 @@ export function setupMobileControls({ canvas, input, onPause }) {
     const moveStick = new AnalogStick({ side: 'left', label: 'MOVE' });
     const mobilePauseBtn = document.getElementById('mobile-pause-button');
 
-    // Double-tap the move stick to dash. Tracks the time of the last
-    // stick-claiming touchstart; a second within DOUBLE_TAP_MS flags a
-    // dash, consumed by readInputs(). Dash direction is resolved by the
-    // player (stick push → momentum → heading).
-    const DOUBLE_TAP_MS = 280;
-    let lastStickTapAt = 0;
-    let dashRequested = false;
-
     function resize() {
         moveStick.resize(canvas.width, canvas.height);
     }
@@ -40,9 +32,6 @@ export function setupMobileControls({ canvas, input, onPause }) {
             const { x, y } = toCanvas(t);
             if (moveStick.onTouchStart(t.identifier, x, y)) {
                 vibrate(10);
-                const now = performance.now();
-                if (now - lastStickTapAt < DOUBLE_TAP_MS) { dashRequested = true; vibrate(25); }
-                lastStickTapAt = now;
             }
         }
         e.preventDefault();
@@ -71,9 +60,7 @@ export function setupMobileControls({ canvas, input, onPause }) {
         moveStick,
         draw(ctx) { moveStick.draw(ctx); },
         readInputs() {
-            const dash = dashRequested;
-            dashRequested = false; // consume the edge
-            return { move: moveStick.getInput(), dash };
+            return { move: moveStick.getInput() };
         },
         resize,
     };

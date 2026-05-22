@@ -116,8 +116,7 @@ export function handleCollisions(state, pools, audio, haptic, shake) {
     let playerDied = false;
 
     // ── player ↔ asteroid ─────────────────────────────────────────────
-    // Dash i-frames (player.invuln > 0) let the ship pass through rocks.
-    if (state.player.active && state.player.invuln <= 0) {
+    if (state.player.active) {
         for (const ast of pools.asteroids.activeObjects) {
             if (collision(state.player, ast)) {
                 playerDied = true;

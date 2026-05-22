@@ -32,7 +32,7 @@ import { setupPauseMenu } from './ui/pause.js';
 import { setupMobileControls } from './ui/mobile-controls.js';
 import { createFloaters } from './ui/floaters.js';
 
-import { COMBO_WINDOW_MS, COMBO_MAX, DASH_COOLDOWN } from './core/utils.js';
+import { COMBO_WINDOW_MS, COMBO_MAX } from './core/utils.js';
 
 import { createRenderer } from './render/select.js';
 import { createUIOverlay } from './render/ui-overlay.js';
@@ -80,7 +80,6 @@ const game = {
 
 const input = {
     up: false, down: false, space: false, rotation: 0,
-    dash: false, _dashHeld: false,
     gameState: () => game.state,
 };
 
@@ -159,6 +158,7 @@ function init() {
     game.hitstopMs = 0;
     floaters.clear();
     buildPools();
+    if (location.search.includes('debug')) window.__game = game; // TEMP debug hook
     game.player = new Player();
     game.spawner = createSpawner({ pools: game.pools });
     for (let i = 0; i < STAR_COUNT; i++) spawnStar();
@@ -240,13 +240,6 @@ document.addEventListener('keydown', e => {
         case 'ArrowLeft':  input.rotation = -1; break;
         case 'ArrowRight': input.rotation = 1; break;
         case 'Space':      input.space = true; break;
-        // Dash on Shift — edge-triggered (keydown auto-repeats while held,
-        // so guard with _dashHeld for one dash per press; cooldown does
-        // the rest).
-        case 'ShiftLeft':
-        case 'ShiftRight':
-            if (!input._dashHeld) { input._dashHeld = true; input.dash = true; }
-            break;
     }
 });
 
@@ -257,8 +250,6 @@ document.addEventListener('keyup', e => {
         case 'ArrowLeft':  if (input.rotation < 0) input.rotation = 0; break;
         case 'ArrowRight': if (input.rotation > 0) input.rotation = 0; break;
         case 'Space':      input.space = false; break;
-        case 'ShiftLeft':
-        case 'ShiftRight': input._dashHeld = false; break;
     }
 });
 
@@ -439,7 +430,6 @@ function gameLoop() {
         drawComboHud(ui.ctx);
         floaters.draw(ui.ctx);
     }
-    if (game.state === 'PLAYING') drawDashHud(ui.ctx);
     ui.endFrame(renderer.flag || 'canvas2d');
 
     requestAnimationFrame(gameLoop);
@@ -467,29 +457,6 @@ function drawComboHud(ctx) {
     ctx.fillRect(0, 16, 64, 3);
     ctx.fillStyle = comboColor(mult);
     ctx.fillRect(0, 16, 64 * Math.max(0, frac), 3);
-    ctx.restore();
-}
-
-// Dash cooldown readout (top-left, under the combo slot). Fills back to
-// full + brightens when the dash is ready again.
-function drawDashHud(ctx) {
-    if (!game.player) return;
-    const cd = game.player.dashCooldown || 0;
-    const fill = Math.min(1, 1 - cd / DASH_COOLDOWN);
-    const ready = cd <= 0;
-    const x = 24, y = 100, w = 64, h = 6;
-    ctx.save();
-    ctx.font = '8px "Press Start 2P", monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    ctx.fillStyle = '#000';
-    ctx.fillText('DASH', x + 1, y - 3);
-    ctx.fillStyle = ready ? '#0ff' : 'rgba(120,170,190,0.85)';
-    ctx.fillText('DASH', x, y - 4);
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = ready ? '#0ff' : 'rgba(0,200,220,0.7)';
-    ctx.fillRect(x, y, w * fill, h);
     ctx.restore();
 }
 
@@ -524,8 +491,9 @@ async function boot() {
 
     // Nebula clouds — baked once, textures uploaded to the active
     // renderer. Created after the renderer so registerTexture can run.
-    nebula = createNebula();
-    nebula.register(renderer);
+    // Disabled for now for a cleaner background; re-enable by uncommenting.
+    // nebula = createNebula();
+    // nebula.register(renderer);
 
     // Diagnostic overlays — invisible until SHIFT+F / SHIFT+B.
     fpsOverlay = new FPSOverlay();
